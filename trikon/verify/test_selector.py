@@ -23,7 +23,7 @@ from trikon.change_intel.ast_indexer import SymbolDef
 class TestSelection:
     """The tests we intend to run for a given change."""
 
-    test_ids: tuple[str, ...]      # pytest node IDs
+    test_ids: tuple[str, ...]  # pytest node IDs
     selected_via_coverage: int
     selected_via_filename: int
     selected_via_same_module: int

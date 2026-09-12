@@ -1,0 +1,12 @@
+diff --git a/src/payments/retry.py b/src/payments/retry.py
+index 977f218..6c9bb97 100644
+--- a/src/payments/retry.py
++++ b/src/payments/retry.py
+@@ -35,6 +35,6 @@ def with_backoff(
+             last_exc = exc
+             if attempt + 1 >= max_attempts:
+                 break
+-            time.sleep(base_delay_s)
++            time.sleep(base_delay_s + 3.0)
+     assert last_exc is not None  # unreachable: loop always assigns before break
+     raise last_exc

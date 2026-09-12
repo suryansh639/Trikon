@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 TOOL_DESCRIPTION = (
     "Verify a proposed code change by computing its blast radius, running "
     "impacted tests and static checks in isolation, and returning a "

@@ -1,0 +1,47 @@
+{
+  "changed_files": [
+    "src/payments/retry.py"
+  ],
+  "changed_symbols": [
+    {
+      "qualified_name": "payments.retry.with_backoff",
+      "file_path": "src/payments/retry.py",
+      "kind": "function"
+    }
+  ],
+  "impacted_modules": [
+    "api",
+    "orders",
+    "payments"
+  ],
+  "impacted_public_apis": [
+    {
+      "qualified_name": "api.payments.charge_endpoint",
+      "file_path": "src/api/payments.py",
+      "kind": "function"
+    },
+    {
+      "qualified_name": "orders.worker.PaymentWorker.process",
+      "file_path": "src/orders/worker.py",
+      "kind": "method"
+    },
+    {
+      "qualified_name": "payments.gateway.charge",
+      "file_path": "src/payments/gateway.py",
+      "kind": "function"
+    },
+    {
+      "qualified_name": "payments.retry.with_backoff",
+      "file_path": "src/payments/retry.py",
+      "kind": "function"
+    }
+  ],
+  "impacted_tests": [
+    "tests/api/test_payments.py",
+    "tests/test_gateway.py",
+    "tests/test_retry.py",
+    "tests/test_worker.py"
+  ],
+  "blast_radius_score": "HIGH",
+  "blast_radius_numeric": 23.0
+}

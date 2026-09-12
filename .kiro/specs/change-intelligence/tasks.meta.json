@@ -1,0 +1,647 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Write `trikon/change_intel/errors.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198419847
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198464437
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199116759
+      }
+    ],
+    "1.2 Write `trikon/change_intel/models.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198420287
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198464629
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199116872
+      }
+    ],
+    "2.1 Create the baseline sample repo layout": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198420878
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198465078
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199117591
+      }
+    ],
+    "2.2 Materialize the five change scenarios": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198421160
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199138400
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201304762
+      }
+    ],
+    "2.3 Write expected `ImpactSet` fixtures under `tests/fixtures/expected_impact/`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198421447
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206561023
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207583243
+      }
+    ],
+    "3.1 Write `trikon/change_intel/dep_graph.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198421693
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199136691
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201303325
+      }
+    ],
+    "4.1 Write `trikon/change_intel/ast_indexer.py::fast_index_symbols`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198421926
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199136619
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201303396
+      }
+    ],
+    "5.1 Write `trikon/change_intel/ast_indexer.py::index_file`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198422144
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206560685
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207582768
+      }
+    ],
+    "5.2 Write `trikon/change_intel/ast_indexer.py::index_files`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198422368
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208029100
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208568354
+      }
+    ],
+    "6.1 Write `trikon/change_intel/diff_parser.py::parse_diff`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198422775
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199137648
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201303712
+      }
+    ],
+    "7.1 Write `trikon/change_intel/symbol_resolver.py::find_references`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198423058
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206560305
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207582503
+      }
+    ],
+    "8.1 Write `trikon/change_intel/blast_radius.py` helpers": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198423345
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208029212
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208569339
+      }
+    ],
+    "8.2 Write `trikon/change_intel/blast_radius.py::compute_impact`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198423570
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208572533
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789209298812
+      }
+    ],
+    "9.1 Extend `trikon/sdk.py` with a Phase-1 `verify` implementation": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198423743
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789209301015
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789210012385
+      }
+    ],
+    "9.2 Add `trikon debug impact` to `trikon/cli.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198423980
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789210012569
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212639682
+      }
+    ],
+    "11.1 Create `.github/workflows/ci.yml`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198424281
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201343195
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206542348
+      }
+    ],
+    "11.2 Create `.pre-commit-config.yaml`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198424535
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199139549
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201305517
+      }
+    ],
+    "11.3 Extend `pyproject.toml`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198424722
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198465763
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199118347
+      }
+    ],
+    "12.2 Add the `perf` job to `.github/workflows/ci.yml`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198424915
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789213288488
+      },
+      {
+        "executionId": "202a8764-f73c-446f-b57b-c200345adaff",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789214557908
+      }
+    ],
+    "13.1 Write `docs/change_intel.md`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198425107
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789210015564
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212641512
+      }
+    ],
+    "13.2 Refresh public-facing docs": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198425326
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212643315
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789213288055
+      }
+    ],
+    "14.1 Run full quality gates and close out DoD": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198425589
+      },
+      {
+        "executionId": "202a8764-f73c-446f-b57b-c200345adaff",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789214558677
+      },
+      {
+        "executionId": "202a8764-f73c-446f-b57b-c200345adaff",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789215745707
+      }
+    ],
+    "1.3 Write unit tests in `tests/unit/change_intel/test_errors_and_models.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198439064
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201344575
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206543012
+      }
+    ],
+    "3.2 Write unit tests in `tests/unit/change_intel/test_dep_graph.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198440167
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206562053
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207584200
+      }
+    ],
+    "4.2 Write property test in `tests/unit/change_intel/test_ast_indexer_fast.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198441341
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206563195
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207585394
+      }
+    ],
+    "5.3 Write cache-hit property test in `tests/unit/change_intel/test_ast_indexer_cached.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198442401
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208571398
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789209298432
+      }
+    ],
+    "6.2 Write unit tests in `tests/unit/change_intel/test_diff_parser.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198443222
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207603915
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208018676
+      }
+    ],
+    "7.2 Write unit tests in `tests/unit/change_intel/test_symbol_resolver.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198444384
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208030042
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208570503
+      }
+    ],
+    "8.3 Write property + unit tests in `tests/unit/change_intel/test_blast_radius.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198445586
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789209299942
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789210012219
+      }
+    ],
+    "10.1 Write `tests/integration/change_intel/test_end_to_end_sample_repo.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198446651
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789210013593
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212639831
+      }
+    ],
+    "10.2 Write `tests/integration/change_intel/test_never_fail_open.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198447458
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789210014480
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212640397
+      }
+    ],
+    "12.1 Write `tests/benchmarks/test_perf.py`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789198448369
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212642191
+      },
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789213287647
+      }
+    ],
+    "1. Establish the change-intel type foundation": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789199116959
+      }
+    ],
+    "3. Implement `DepGraph` and the SQLite state schema": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201303478
+      }
+    ],
+    "4. Implement the fast AST indexer path": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201303628
+      }
+    ],
+    "6. Implement the diff parser": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789201303795
+      }
+    ],
+    "11. Land CI + tooling baselines": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789206543252
+      }
+    ],
+    "7. Implement the symbol resolver": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207583006
+      }
+    ],
+    "2. Materialize `examples/sample_repo/` and expected-impact fixtures": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789207583567
+      }
+    ],
+    "5. Implement the cached AST indexer path": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789208568539
+      }
+    ],
+    "8. Implement the blast-radius orchestrator": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789209298922
+      }
+    ],
+    "9. Wire the SDK entry point and CLI debug command": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212639977
+      }
+    ],
+    "10. Integration tests against `examples/sample_repo/`": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789212640134
+      }
+    ],
+    "13. Documentation": [
+      {
+        "executionId": "f7c949f7-d6e5-47ec-a1f5-6f24e9bec8bb",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789213288205
+      }
+    ],
+    "12. Performance benchmark suite and CI gate": [
+      {
+        "executionId": "202a8764-f73c-446f-b57b-c200345adaff",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789214558281
+      }
+    ],
+    "14. Finalize Phase 1": [
+      {
+        "executionId": "202a8764-f73c-446f-b57b-c200345adaff",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789215746092
+      }
+    ]
+  }
+}

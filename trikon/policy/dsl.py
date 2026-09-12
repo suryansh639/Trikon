@@ -18,7 +18,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 Decision = Literal["allow", "block", "require_human", "warn"]
 
 

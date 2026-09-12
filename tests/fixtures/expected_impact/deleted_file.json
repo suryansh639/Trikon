@@ -1,0 +1,53 @@
+{
+  "changed_files": [
+    "src/orders/__init__.py",
+    "src/orders/worker.py"
+  ],
+  "changed_symbols": [
+    {
+      "qualified_name": "orders.__all__",
+      "file_path": "src/orders/__init__.py",
+      "kind": "assignment"
+    },
+    {
+      "qualified_name": "orders.worker.PaymentJob",
+      "file_path": "src/orders/worker.py",
+      "kind": "class"
+    },
+    {
+      "qualified_name": "orders.worker.PaymentWorker",
+      "file_path": "src/orders/worker.py",
+      "kind": "class"
+    },
+    {
+      "qualified_name": "orders.worker.PaymentWorker.process",
+      "file_path": "src/orders/worker.py",
+      "kind": "method"
+    }
+  ],
+  "impacted_modules": [
+    "orders"
+  ],
+  "impacted_public_apis": [
+    {
+      "qualified_name": "orders.worker.PaymentJob",
+      "file_path": "src/orders/worker.py",
+      "kind": "class"
+    },
+    {
+      "qualified_name": "orders.worker.PaymentWorker",
+      "file_path": "src/orders/worker.py",
+      "kind": "class"
+    },
+    {
+      "qualified_name": "orders.worker.PaymentWorker.process",
+      "file_path": "src/orders/worker.py",
+      "kind": "method"
+    }
+  ],
+  "impacted_tests": [
+    "tests/test_worker.py"
+  ],
+  "blast_radius_score": "MEDIUM",
+  "blast_radius_numeric": 10.5
+}

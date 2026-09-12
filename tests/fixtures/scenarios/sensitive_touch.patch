@@ -1,0 +1,27 @@
+diff --git a/src/payments/gateway.py b/src/payments/gateway.py
+index a44eb6d..409f90d 100644
+--- a/src/payments/gateway.py
++++ b/src/payments/gateway.py
+@@ -14,6 +14,7 @@ class ChargeResult:
+     amount_cents: int
+     card_id: str
+     status: str
++    currency: str = "USD"
+ 
+ 
+ def _normalize_amount(amount: int | float) -> int:
+@@ -28,7 +29,7 @@ def _external_charge_call(amount_cents: int, card_id: str) -> str:
+     return f"ch_{card_id}_{amount_cents}"
+ 
+ 
+-def charge(amount: int, card_id: str) -> ChargeResult:
++def charge(amount: int, card_id: str, *, currency: str = "USD") -> ChargeResult:
+     """Charge `card_id` for `amount` cents via the gateway with retries.
+ 
+     This is the public entry point of the payments subsystem: `orders.worker`
+@@ -45,4 +46,5 @@ def charge(amount: int, card_id: str) -> ChargeResult:
+         amount_cents=amount_cents,
+         card_id=card_id,
+         status="ok",
++        currency=currency,
+     )

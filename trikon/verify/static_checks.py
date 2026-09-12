@@ -15,14 +15,14 @@ from pathlib import Path
 class Finding:
     """A single static-analysis finding."""
 
-    tool: str            # "ruff" | "mypy" | plugin name
+    tool: str  # "ruff" | "mypy" | plugin name
     rule_id: str
-    severity: str        # "error" | "warning" | "info"
+    severity: str  # "error" | "warning" | "info"
     file_path: str
     line: int
     column: int | None
     message: str
-    is_new: bool         # True if not present at base_sha
+    is_new: bool  # True if not present at base_sha
 
 
 def run_ruff(files: list[Path], repo_path: Path) -> list[Finding]:

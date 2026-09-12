@@ -1,0 +1,13 @@
+diff --git a/README.md b/README.md
+index ac7afae..1b52581 100644
+--- a/README.md
++++ b/README.md
+@@ -59,3 +59,8 @@ stubbed via `monkeypatch` so the whole suite runs in well under a second.
+ `.trikon/policy.yaml` marks `payments/**` as sensitive — a Trikon scenario that
+ touches anything under `src/payments/` should land in the `HIGH` blast-radius
+ bucket.
++
++## Change scenarios
++
++This repo is the target of five change scenarios stored as patch files under
++`tests/fixtures/scenarios/`. See that directory's README for details.

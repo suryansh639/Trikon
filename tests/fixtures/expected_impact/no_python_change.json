@@ -1,0 +1,11 @@
+{
+  "changed_files": [
+    "README.md"
+  ],
+  "changed_symbols": [],
+  "impacted_modules": [],
+  "impacted_public_apis": [],
+  "impacted_tests": [],
+  "blast_radius_score": "LOW",
+  "blast_radius_numeric": 0.0
+}

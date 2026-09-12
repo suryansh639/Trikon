@@ -23,7 +23,6 @@ from trikon.evidence.report import (
 )
 from trikon.policy.dsl import Policy, Rule
 
-
 TERMINAL = {"allow", "block", "require_human"}
 
 

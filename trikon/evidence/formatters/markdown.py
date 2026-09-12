@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from trikon.evidence.report import Verdict
 
-
 ICON = {"allow": "✅", "block": "🛑", "require_human": "🔍"}
 
 

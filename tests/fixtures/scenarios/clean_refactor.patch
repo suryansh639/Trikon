@@ -1,0 +1,25 @@
+diff --git a/src/orders/worker.py b/src/orders/worker.py
+index a330818..9806303 100644
+--- a/src/orders/worker.py
++++ b/src/orders/worker.py
+@@ -19,6 +19,11 @@ class PaymentJob:
+     card_id: str
+ 
+ 
++def _time_since(started: float) -> float:
++    """Return monotonic seconds elapsed since `started`."""
++    return time.monotonic() - started
++
++
+ class PaymentWorker:
+     """Processes payment jobs against the payments gateway."""
+ 
+@@ -43,7 +48,7 @@ class PaymentWorker:
+             base_delay_s=0.01,
+         )
+ 
+-        elapsed = time.monotonic() - started
++        elapsed = _time_since(started)
+         if elapsed > self.DEADLINE_SECONDS:
+             raise TimeoutError(
+                 f"PaymentWorker.process exceeded {self.DEADLINE_SECONDS}s "

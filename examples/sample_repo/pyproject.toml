@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trikon-sample-repo"
+version = "0.0.1"
+description = "Test fixture for Trikon's change-intelligence pipeline."
+requires-python = ">=3.11"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["payments", "orders", "api"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

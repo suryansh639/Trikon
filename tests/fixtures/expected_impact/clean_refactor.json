@@ -1,0 +1,26 @@
+{
+  "changed_files": [
+    "src/orders/worker.py"
+  ],
+  "changed_symbols": [
+    {
+      "qualified_name": "orders.worker.PaymentWorker.process",
+      "file_path": "src/orders/worker.py",
+      "kind": "method"
+    },
+    {
+      "qualified_name": "orders.worker._time_since",
+      "file_path": "src/orders/worker.py",
+      "kind": "function"
+    }
+  ],
+  "impacted_modules": [
+    "orders"
+  ],
+  "impacted_public_apis": [],
+  "impacted_tests": [
+    "tests/test_worker.py"
+  ],
+  "blast_radius_score": "LOW",
+  "blast_radius_numeric": 1.5
+}
