@@ -1,0 +1,52 @@
+---
+title: "trikon mcp serve"
+description: "Start the MCP server so AI agents can call Trikon as a tool."
+---
+
+Runs the Trikon MCP server so any MCP-aware AI agent (Claude Code, Cursor, Codex, custom) can invoke `verify_change`.
+
+## Usage
+
+```bash
+trikon mcp serve [OPTIONS]
+```
+
+## Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--stdio` | off | Communicate over stdio (for editor-embedded agents) |
+| `--port <n>` | `4801` | TCP port (only used when `--stdio` is off) |
+| `--host <addr>` | `127.0.0.1` | Bind address |
+| `--sandbox <backend>` | `docker` | Sandbox backend for verification runs |
+
+## Examples
+
+<CodeGroup>
+```bash Stdio (Claude Code, Cursor)
+trikon mcp serve --stdio
+```
+```bash TCP (custom clients)
+trikon mcp serve --port 4801
+```
+```bash Fast local (no sandbox)
+trikon mcp serve --stdio --sandbox=none
+```
+</CodeGroup>
+
+## Tool exposed
+
+Just one:
+
+- **`verify_change`** — see [MCP integration](/integrations/mcp) for the full contract.
+
+## Wiring specific agents
+
+- [Claude Code](/integrations/claude-code)
+- [Cursor](/integrations/cursor)
+- [Unideploy autopilot](/integrations/unideploy)
+
+## Related
+
+- [MCP integration](/integrations/mcp)
+- [Verdicts](/concepts/verdicts)

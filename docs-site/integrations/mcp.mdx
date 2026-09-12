@@ -1,0 +1,91 @@
+---
+title: "MCP Server"
+description: "Expose Trikon as a tool any MCP-aware agent can call."
+---
+
+The MCP (Model Context Protocol) server is how autonomous AI agents call Trikon. This is Trikon's most important integration surface: the wedge is "unattended agents", and unattended agents need machine-readable signals, not human-readable PR comments.
+
+## Tool contract
+
+```
+name:        verify_change
+description: Verify a proposed code change by computing its blast radius,
+             running impacted tests and static checks in isolation, and
+             returning a machine-readable verdict.
+input:
+    repo_path   (string, required)  — absolute path to the target repo
+    base_sha    (string, optional)  — git SHA of the base commit
+    head_sha    (string, optional)  — git SHA of the head commit
+    diff        (string, optional)  — unified diff (alternative to SHAs)
+    policy_path (string, default: ".trikon/policy.yaml")
+output:
+    A JSON-serialized Verdict (see /concepts/verdicts).
+```
+
+At least one of `(base_sha + head_sha)` or `diff` must be provided.
+
+## Running the server
+
+<CodeGroup>
+```bash TCP
+trikon mcp serve --port 4801
+```
+```bash Stdio
+trikon mcp serve --stdio
+```
+</CodeGroup>
+
+Stdio is the transport most editor-embedded agents (Claude Code, Cursor) use.
+
+## Recommended agent behavior
+
+```
+1. Agent produces a proposed change.
+2. Agent calls verify_change(repo_path, base_sha, head_sha).
+3. Agent reads the returned Verdict:
+     • decision == "allow"          → proceed (merge / deploy / push).
+     • decision == "block"          → STOP. Do not retry blindly. Surface
+                                        the failing tests to the human.
+     • decision == "require_human"  → open a PR; do not merge. Include
+                                        the markdown verdict in the PR body.
+```
+
+## Integrations
+
+<CardGroup cols={2}>
+  <Card title="Claude Code" icon="anthropic" href="/integrations/claude-code">
+    Add Trikon as an MCP server; call from any Claude Code session.
+  </Card>
+  <Card title="Cursor" icon="c" href="/integrations/cursor">
+    Wire Trikon into Cursor's MCP configuration.
+  </Card>
+  <Card title="Unideploy autopilot" icon="rocket" href="/integrations/unideploy">
+    Pre-apply gate for unattended infra changes.
+  </Card>
+  <Card title="Custom agents" icon="code">
+    Point any MCP client at `http://127.0.0.1:4801`.
+  </Card>
+</CardGroup>
+
+## What the agent should NOT do
+
+- **Do not** call the LLM again to interpret the Verdict when `decision != "allow"`. The verdict is structured for a reason.
+- **Do not** silently retry on `block`. That is a policy circumvention.
+- **Do not** treat `require_human` as a soft warning. It is a firm "open a PR; do not merge."
+- **Do not** cache a stale verdict across changes. Every commit needs a fresh call.
+
+## Error responses
+
+If Trikon cannot produce a verdict (sandbox failed to start, repo missing, policy invalid), the tool returns:
+
+```json
+{
+  "error": {
+    "code": "sandbox_start_failed" | "repo_not_found" | "policy_invalid" | "internal",
+    "message": "human-readable description",
+    "recoverable": true
+  }
+}
+```
+
+**Agents must treat any error as `require_human`.** Never assume `allow` on error.

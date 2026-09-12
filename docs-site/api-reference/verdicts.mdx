@@ -1,0 +1,107 @@
+---
+title: "Verdicts API"
+description: "List, retrieve, and submit verdicts."
+---
+
+## List verdicts
+
+```
+GET /v1/verdicts
+```
+
+### Query parameters
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `repo` | string | Filter to one repo (`owner/name` format) |
+| `decision` | string | `allow` \| `block` \| `require_human` |
+| `from` | ISO-8601 | Emitted after this timestamp |
+| `to` | ISO-8601 | Emitted before this timestamp |
+| `limit` | int | Max results (default 50, max 200) |
+| `cursor` | string | Pagination cursor from a previous response |
+
+### Response
+
+```json
+{
+  "data": [
+    {
+      "audit_id": "01JAGXYZ...",
+      "decision": "block",
+      "reason": "One or more impacted tests failed.",
+      "matched_rule": "impacted tests failed",
+      "repo": "acme/payment-service",
+      "base_sha": "abc123",
+      "head_sha": "def456",
+      "created_at": "2026-09-13T03:14:07Z"
+    }
+  ],
+  "meta": {
+    "request_id": "01JAG...",
+    "next_cursor": "eyJ0aW1lIjo..."
+  }
+}
+```
+
+## Get a single verdict
+
+```
+GET /v1/verdicts/:audit_id
+```
+
+Returns the full verdict including the embedded evidence.
+
+```json
+{
+  "data": {
+    "audit_id": "01JAGXYZ...",
+    "decision": "block",
+    "reason": "One or more impacted tests failed.",
+    "matched_rule": "impacted tests failed",
+    "evidence": {
+      "change": { ... },
+      "verification": { ... },
+      "policy_results": [ ... ]
+    },
+    "audit_id": "01JAGXYZ...",
+    "created_at": "2026-09-13T03:14:07Z",
+    "schema_version": 1
+  }
+}
+```
+
+Full evidence shape: [Verdicts concept](/concepts/verdicts).
+
+## Submit a verdict (Enterprise self-hosted only)
+
+```
+POST /v1/verdicts
+```
+
+Used by the self-hosted runner to send a verdict it computed to the central control plane. Not intended for end-user use.
+
+### Request body
+
+```json
+{
+  "verdict": { <full Verdict object> },
+  "runner_id": "trikon-runner-us-east-1-1",
+  "runner_signature": "<HMAC>"
+}
+```
+
+The signature is HMAC-SHA256 over the verdict JSON using a shared secret established during runner provisioning.
+
+### Response
+
+```json
+{
+  "data": { "audit_id": "01JAG...", "accepted": true },
+  "meta": { "request_id": "01JAG..." }
+}
+```
+
+## Related
+
+- [Audit log export](/concepts/audit-log)
+- [Verdicts concept](/concepts/verdicts)

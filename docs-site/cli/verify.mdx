@@ -1,0 +1,70 @@
+---
+title: "trikon verify"
+description: "Run the full verification pipeline and emit a verdict."
+---
+
+Runs Trikon end-to-end against a git change set and emits a verdict.
+
+## Usage
+
+```bash
+trikon verify [OPTIONS]
+```
+
+## Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--base <sha>` | none | Base commit SHA |
+| `--head <sha>` | none | Head commit SHA |
+| `--diff-file <path>` | none | Unified diff file (alternative to `--base`/`--head`) |
+| `--policy <path>` | `.trikon/policy.yaml` | Policy YAML |
+| `--sandbox <backend>` | `docker` | Sandbox backend: `docker`, `warden`, `none` |
+| `--output` / `-o` | `markdown` | Output format: `markdown`, `json` |
+| `--repo <path>` | current dir | Repository path |
+
+Exactly one of `(--base + --head)` or `--diff-file` must be provided.
+
+## Examples
+
+<CodeGroup>
+```bash Compare two commits
+trikon verify --base main --head HEAD
+```
+```bash Compare a PR
+trikon verify \
+  --base origin/main \
+  --head feature-branch
+```
+```bash JSON output for automation
+trikon verify --base main --head HEAD -o json > verdict.json
+```
+```bash Fast local iteration (no sandbox)
+trikon verify --base main --head HEAD --sandbox=none
+```
+```bash Piped diff
+git diff main..HEAD | trikon verify --diff-file -
+```
+</CodeGroup>
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | `allow` |
+| `1` | `block` |
+| `2` | `require_human` |
+| `3+` | Environment / setup error (see [CLI overview](/cli/overview)) |
+
+## What it does internally
+
+1. Parses the diff → `ChangeSet`.
+2. Runs the AST indexer over changed files (incremental; cached).
+3. Queries the dep graph for transitive dependents.
+4. Selects impacted pytest tests via the coverage map.
+5. Spins up the sandbox and runs targeted tests + ruff + mypy + repo plugins.
+6. Applies the policy.
+7. Writes the verdict to the local audit log.
+8. Renders the verdict in the requested format.
+
+Full concept doc: [Blast radius](/concepts/blast-radius) and [Verdicts](/concepts/verdicts).

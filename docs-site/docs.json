@@ -1,0 +1,154 @@
+{
+  "theme": "mint",
+  "name": "Trikon",
+  "description": "The verification layer for autonomous AI coding agents. Executed evidence, not LLM opinion.",
+  "colors": {
+    "primary": "#0f766e",
+    "light": "#14b8a6",
+    "dark": "#0f766e"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/logo-light.svg",
+    "dark": "/logo/logo-dark.svg",
+    "href": "https://trikon.dev"
+  },
+  "seo": {
+    "metatags": {
+      "canonical": "https://docs.trikon.dev"
+    }
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "background": {
+    "decoration": "gradient"
+  },
+  "styling": {
+    "eyebrows": "breadcrumbs",
+    "codeblocks": "dark"
+  },
+  "search": {
+    "prompt": "Search or ask the Trikon docs..."
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude"]
+  },
+  "navigation": {
+    "global": {
+      "anchors": [
+        { "anchor": "Website", "href": "https://trikon.dev", "icon": "globe" },
+        { "anchor": "Pricing", "href": "https://trikon.dev/pricing", "icon": "credit-card" },
+        { "anchor": "GitHub", "href": "https://github.com/suryansh639/Trikon", "icon": "github" },
+        { "anchor": "Support", "href": "mailto:support@trikon.dev", "icon": "envelope" }
+      ]
+    },
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/verdicts",
+              "concepts/blast-radius",
+              "concepts/policy-dsl",
+              "concepts/audit-log"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/mcp",
+              "integrations/claude-code",
+              "integrations/cursor",
+              "integrations/unideploy",
+              "integrations/github-app",
+              "integrations/github-actions"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/verify",
+              "cli/init",
+              "cli/mcp"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/team-tier",
+              "deployment/enterprise"
+            ]
+          },
+          {
+            "group": "Trust & Security",
+            "pages": [
+              "security",
+              "pricing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["api-reference/introduction"]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api-reference/verdicts",
+              "api-reference/policies"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "groups": [
+          {
+            "group": "Releases",
+            "pages": ["changelog"]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/suryansh639/Trikon",
+      "x": "https://twitter.com/trikon_dev"
+    },
+    "links": [
+      {
+        "header": "Product",
+        "items": [
+          { "label": "Docs", "href": "https://docs.trikon.dev" },
+          { "label": "Pricing", "href": "https://trikon.dev/pricing" },
+          { "label": "Changelog", "href": "https://docs.trikon.dev/changelog" }
+        ]
+      },
+      {
+        "header": "Company",
+        "items": [
+          { "label": "Trust", "href": "https://docs.trikon.dev/security" },
+          { "label": "Status", "href": "https://status.trikon.dev" },
+          { "label": "Contact", "href": "mailto:support@trikon.dev" }
+        ]
+      }
+    ]
+  }
+}

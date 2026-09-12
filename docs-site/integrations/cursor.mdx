@@ -1,0 +1,59 @@
+---
+title: "Cursor"
+description: "Verify Cursor-generated changes with Trikon before they merge."
+---
+
+Cursor supports MCP servers via its settings. Wire Trikon in and Cursor can call `verify_change` on any diff it produces.
+
+## Setup
+
+<Steps>
+  <Step title="Install Trikon">
+    ```bash
+    pip install trikon
+    ```
+  </Step>
+  <Step title="Open Cursor Settings → Features → MCP">
+    Add a new MCP server:
+    - **Name**: `trikon`
+    - **Command**: `trikon`
+    - **Args**: `mcp serve --stdio`
+  </Step>
+  <Step title="Enable in the composer">
+    In Cursor's composer, the `verify_change` tool now appears under Available Tools. Toggle it on.
+  </Step>
+  <Step title="Initialize your repo">
+    ```bash
+    cd your-repo
+    trikon init
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+```
+Cmd+K: "Refactor the auth middleware to use short-lived tokens.
+        Call trikon.verify_change before finalizing."
+```
+
+Cursor's composer will invoke Trikon and read the verdict before applying the change.
+
+## Configuration for autonomous mode
+
+If you use Cursor's autonomous mode (background agent), require Trikon verification globally in `.cursor/rules.mdc`:
+
+```markdown
+---
+description: Trikon verification required
+---
+
+For every code change proposed by an autonomous agent, call the trikon.verify_change
+MCP tool before finalizing. If the verdict is `block` or `require_human`, stop and
+surface the verdict to the operator. Never silently retry.
+```
+
+## Related
+
+- [MCP integration](/integrations/mcp) — full protocol contract
+- [Claude Code](/integrations/claude-code) — same pattern

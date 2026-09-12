@@ -1,0 +1,93 @@
+---
+title: "Trust & Security"
+description: "How Trikon handles your code, your tests, and your data."
+---
+
+The single most important thing enterprise security teams ask us is *what leaves our perimeter?* This page answers that precisely, followed by the operational security posture Trikon runs by.
+
+## Data flow, by deployment mode
+
+| Data | Local OSS | Team (hosted) | Enterprise (self-hosted) |
+| --- | --- | --- | --- |
+| Source code | never leaves your machine | shallow-clone into ephemeral sandbox; not persisted | never leaves your VPC |
+| Git diff | never leaves | stored 90 days | never leaves |
+| Test output | never leaves | 90-day retention, secrets redacted | never leaves |
+| Verdict JSON | never leaves | 90-day retention | crosses to Trikon control plane |
+| Repo metadata (name, owner) | never leaves | yes | yes |
+| Coverage map | never leaves | never leaves customer worker context | never leaves |
+| Policy file | never leaves | yes (needed to evaluate) | yes |
+
+## Encryption
+
+- **At rest**: DynamoDB and S3 encrypted with per-org AWS KMS Customer-Managed Keys. Key material never leaves AWS KMS.
+- **In transit**: TLS 1.3 minimum. Deprecated ciphers disabled. mTLS between the self-hosted runner and the control plane.
+- **Sandbox execution**: containers run with a non-root user, read-only mount for source, tmpfs for outputs, network disabled unless the policy opts in with a per-domain allowlist.
+
+## Secrets handling
+
+- Trikon never asks for secrets from your code or your CI.
+- Before persisting test output, we regex-scan for common secret shapes (API keys, tokens, private-key headers) and replace with `[REDACTED]`.
+- If you find a secret in a persisted verdict, email `security@trikon.dev` — we treat it as a Sev1.
+
+## Compliance
+
+| Framework | Status |
+| --- | --- |
+| SOC2 Type 2 | In progress with Vanta; Type 1 target: month 6. Type 2 target: month 12-18. |
+| ISO 27001 | Roadmap. |
+| HIPAA (BAA) | Available for Enterprise customers on request. |
+| GDPR | DPA available for all paid customers. |
+| CCPA | Compliant. |
+| FedRAMP | Not currently pursued. Contact sales if required. |
+
+Under NDA, Team+ customers can request the current Vanta trust report.
+
+## Subprocessors
+
+Trikon uses these subprocessors:
+
+| Vendor | Purpose | Region |
+| --- | --- | --- |
+| AWS | Hosting all customer data | us-east-1 |
+| Cloudflare | Static asset delivery (docs, dashboard) | Global |
+| Stripe | Billing | Global |
+| Vanta | Compliance evidence collection | US |
+| Sentry | Error tracking (never receives customer source) | US |
+| PagerDuty | Incident alerting | US |
+
+Enterprise DPAs can add custom subprocessor terms.
+
+## Retention and deletion
+
+Automatic deletion at the end of the retention window. Customers can request earlier deletion via `DELETE /v1/data` or `support@trikon.dev`.
+
+Data types with different retention:
+
+| Data | Team default | Enterprise |
+| --- | --- | --- |
+| Verdicts + evidence | 90 days | Custom |
+| Test output + logs | 90 days | Custom |
+| Audit log entries | 365 days | Custom (SOC2 / HIPAA-aligned) |
+| Aggregated metrics | 2 years | Custom |
+| Deleted customer data | 30-day recovery, then hard delete | 30-day recovery, then hard delete |
+
+## Security operations
+
+- On-call rotation with PagerDuty escalation
+- Sev1 SLA: acknowledge within 5 minutes, mitigate within 30 minutes
+- Public postmortems for every Sev1 within 5 business days
+- Quarterly disaster-recovery drill (region-failover exercise)
+- Annual external penetration test
+- Bug bounty: responsible-disclosure program in v0.1, formal bounty ($500-5000/report) in v1
+
+## Incident notification
+
+If we suffer a security incident that affects customer data, we notify affected customers within 24 hours of confirmation. Enterprise customers get direct contact from the founder; Team customers get email + status-page banner.
+
+## Report a vulnerability
+
+Email `security@trikon.dev`. PGP key at `/.well-known/security.txt`.
+
+## Full operational detail
+
+See the operator-facing [`OPERATIONS.md`](https://github.com/suryansh639/Trikon/blob/main/OPERATIONS.md) in the repo. That doc is more detailed than this page and is kept current with production reality.

@@ -1,0 +1,89 @@
+---
+title: "Audit Log"
+description: "Every Trikon verdict is written to a tamper-evident, hash-chained audit log."
+---
+
+Every verdict Trikon emits is written to an append-only audit log. Local mode uses SQLite in `.trikon/audit.log`. Hosted (Team) and Enterprise modes use DynamoDB with a nightly S3 export.
+
+## Why hash-chained
+
+The audit log is **tamper-evident**. Each entry contains a SHA-256 of the previous entry, so any modification breaks the chain. Compliance teams can verify the chain integrity without trusting Trikon.
+
+```
+entry_1 = { verdict: {...}, prev_hash: "0000000000..." }
+entry_2 = { verdict: {...}, prev_hash: SHA256(entry_1) }
+entry_3 = { verdict: {...}, prev_hash: SHA256(entry_2) }
+...
+```
+
+## Entry schema
+
+```typescript
+type AuditEntry = {
+  audit_id: string           // UUID (same as Verdict.audit_id)
+  previous_hash: string      // SHA-256 hex
+  verdict: Verdict           // full verdict JSON
+  signer: {
+    org_id: string           // Trikon org (hosted) or "local"
+    repo_id: string
+    actor: string            // "cli" | "mcp:<agent>" | "github-app"
+    agent_id: string | null  // e.g., "claude-code-1.2.3"
+  }
+  created_at: string         // ISO-8601
+}
+```
+
+## Retention
+
+| Tier | Retention |
+| --- | --- |
+| Local OSS | Unlimited (your disk) |
+| Team | 90 days on our infra + you can export to your own S3 |
+| Enterprise | Custom (SOC2 / HIPAA / GDPR-aligned) |
+
+Deletion after retention window is automatic. You can request earlier deletion via the API (Team) or by dropping the SQLite file (local).
+
+## Exporting for compliance
+
+<CodeGroup>
+```bash Local
+trikon audit export --format jsonl > audit.jsonl
+```
+```bash Hosted (Team+)
+curl -H "Authorization: Bearer $TRIKON_API_KEY" \
+     "https://api.trikon.dev/v1/audit/export?from=2026-01-01&to=2026-12-31" \
+     > audit.jsonl
+```
+</CodeGroup>
+
+Output is JSONL (one AuditEntry per line). Verify chain integrity:
+
+```bash
+trikon audit verify audit.jsonl
+# → chain valid; 1247 entries
+```
+
+## What is NOT in the audit log
+
+The audit log records the verdict and its inputs (impact set, verification report). It does **not** record:
+
+- Raw source code
+- Full test output (only summarized results)
+- Environment variables or secrets
+- Anything that regex-matches common secret patterns (Trikon redacts before writing)
+
+If you need immutable code storage separately, use `git` — that's what it's for.
+
+## Compliance frameworks
+
+The audit log is designed to satisfy the evidence requirement for:
+
+- **SOC2 CC7.2** (change management evidence)
+- **ISO 27001 A.14.2.2** (change control)
+- **HIPAA §164.312(b)** (audit controls)
+
+Trikon supplies the log; your compliance program supplies the process around it.
+
+<Info>
+The chain-integrity verifier (`trikon audit verify`) ships in v0.2. Local `audit.log` in v0.1 is append-only but not yet hash-chained.
+</Info>

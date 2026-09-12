@@ -1,0 +1,55 @@
+---
+title: "trikon init"
+description: "Scaffold a Trikon policy and state directory in the current repo."
+---
+
+Initializes Trikon for a repo. Creates the policy file, state directory, and (optionally) a starter set of custom check plugins.
+
+## Usage
+
+```bash
+trikon init [OPTIONS]
+```
+
+## Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--repo <path>` | current dir | Repository path |
+| `--template <name>` | `default` | Starter policy template |
+| `--force` | off | Overwrite existing `.trikon/policy.yaml` |
+
+## What it creates
+
+```
+your-repo/
+├── .trikon/
+│   ├── policy.yaml           # ← committed
+│   ├── checks/               # ← committed, optional custom checks
+│   │   └── .gitkeep
+│   ├── state.db              # ← gitignored
+│   └── audit.log             # ← gitignored
+└── .gitignore                # ← appended
+```
+
+Trikon also appends to your `.gitignore`:
+
+```
+# Trikon state (local only)
+.trikon/state.db
+.trikon/audit.log
+```
+
+## Templates
+
+| Template | Description |
+| --- | --- |
+| `default` | Conservative: sensitive-path require-human, test-failure block, low-blast auto-allow, default require-human. |
+| `permissive` | For internal-only tools: green tests + no new lint → allow. Everything else require-human. Sensitive paths still require human. |
+| `strict` | Everything require-human unless the change is documentation-only. |
+
+Choose with `--template=<name>`.
+
+## Related
+
+- [Policy DSL](/concepts/policy-dsl)

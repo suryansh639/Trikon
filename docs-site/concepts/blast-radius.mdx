@@ -1,0 +1,107 @@
+---
+title: "Blast Radius"
+description: "How Trikon decides which tests actually matter for a given change."
+---
+
+Blast radius is Trikon's answer to *"what does this change affect?"*. It powers targeted test execution, focus recommendations to reviewers, and the numeric score that policies read.
+
+## The pipeline
+
+```
+git diff
+    │
+    ▼
+diff_parser         → ChangeSet (files, hunks, line ranges)
+    │
+    ▼
+ast_indexer         → SymbolDef entries (functions, classes, methods)
+    │
+    ▼
+symbol_resolver     → cross-file references (imports, calls)
+    │
+    ▼
+dep_graph.query     → transitive dependents (N hops)
+    │
+    ▼
+blast_radius        → ImpactSet {
+                        changed_symbols,
+                        impacted_modules,
+                        impacted_public_apis,
+                        impacted_tests,
+                        blast_radius_score,      // LOW | MEDIUM | HIGH
+                        blast_radius_numeric,
+                      }
+```
+
+Every step is cached. Files are re-indexed only when their SHA-256 changes. On a 200K-LOC repo, cold indexing takes ~30 seconds; incremental updates take milliseconds.
+
+## The numeric score
+
+The score is a weighted combination:
+
+```
+score = w1 * len(impacted_modules)
+      + w2 * len(impacted_public_apis)
+      + w3 * len(impacted_test_files)
+      + w4 * cross_package_boundary_hops
+      + w5 * sensitive_path_touches
+```
+
+Default weights (tunable via `weights:` in your policy):
+
+| Weight | Default |
+| --- | --- |
+| `impacted_modules` | 1.0 |
+| `impacted_public_apis` | 3.0 |
+| `impacted_test_files` | 0.5 |
+| `cross_package_hops` | 2.0 |
+| `sensitive_path_touch` | 5.0 |
+
+The score buckets to **LOW / MEDIUM / HIGH**:
+
+- `< 5.0` → LOW
+- `< 15.0` → MEDIUM
+- `≥ 15.0` → HIGH
+
+## Test selection
+
+Given the impacted symbols, Trikon selects tests in this priority order:
+
+1. **Coverage-map lookup**: `symbol → set(test_ids)` built during a prior full run. Cached in `.trikon/coverage.db`.
+2. **Explicit inclusion**: any test files that were themselves modified.
+3. **Same-module heuristic**: tests living in the same package as changed files. This is the safety net for uncovered code paths.
+
+The coverage map ages. When it's more than 7 days behind HEAD, Trikon warns via `coverage_map_stale: true` on the verdict but does not block on it.
+
+### Rebuilding the coverage map
+
+```bash
+trikon coverage build
+```
+
+Runs the full suite with `coverage.py` instrumentation and stores the map. Typically 3-5x slower than a normal pytest run. Do it overnight for large suites.
+
+## What blast radius does NOT do
+
+- It does not guess intent. If your change is renaming a variable, blast radius may pull in a large impacted set even though behavior is unchanged.
+- It does not detect dynamic dispatch that static analysis can't see (e.g., `getattr(obj, method_name)` where `method_name` is a variable).
+- It does not follow test discovery patterns exhaustively; heavily fixture-based tests may be underselected. See the [known limits](#known-limits).
+
+## Known limits
+
+<AccordionGroup>
+  <Accordion title="Dynamic method dispatch">
+    Trikon's AST analysis catches direct calls. It does not catch `getattr()`-based dispatch, plugin systems that load classes by string name, or metaclass-based dispatch. For high-dynamic codebases, use conservative policy weights on `impacted_test_files`.
+  </Accordion>
+  <Accordion title="Fixture-heavy pytest">
+    Trikon uses coverage-map data first, which handles fixtures correctly. When the map is stale or missing, the same-module heuristic can miss fixture-dependent tests. Rebuild the map (`trikon coverage build`) after significant test-suite reorganization.
+  </Accordion>
+  <Accordion title="Non-Python edges">
+    v0.1 indexes only Python. If your Python code calls a Rust binary or a shell script, those cross-language boundaries do not contribute to the dep graph. TypeScript / Java support planned for v0.3+.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Verdicts](/concepts/verdicts) — how the ImpactSet feeds into the final decision
+- [Policy DSL](/concepts/policy-dsl) — how to reference the score in your rules

@@ -1,0 +1,93 @@
+---
+title: "Policies API"
+description: "Manage repo policies through the API."
+---
+
+Most users manage policies via `.trikon/policy.yaml` in the repo. The Policies API is for the dashboard, for automation, and for Enterprise customers with centralized policy governance.
+
+## List policies
+
+```
+GET /v1/policies
+```
+
+### Query parameters
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `repo` | string | Filter to one repo |
+| `limit` | int | Default 50 |
+
+### Response
+
+```json
+{
+  "data": [
+    {
+      "id": "pol_01JAG...",
+      "repo": "acme/payment-service",
+      "source": "repo-file",
+      "policy_hash": "sha256:...",
+      "created_at": "2026-09-01T10:00:00Z",
+      "updated_at": "2026-09-12T12:00:00Z"
+    }
+  ]
+}
+```
+
+`source` is one of:
+
+- `repo-file` — read from the repo's `.trikon/policy.yaml`
+- `dashboard-override` — set via the dashboard, overrides the repo file
+- `enterprise-template` — inherited from an Enterprise-wide template
+
+## Get a policy
+
+```
+GET /v1/policies/:policy_id
+```
+
+Returns the full policy document.
+
+## Update a policy (Team+)
+
+```
+PATCH /v1/policies/:policy_id
+```
+
+Enterprise customers can override the repo file from the dashboard for emergency situations. This creates a `dashboard-override` policy that takes precedence over the repo file until deleted.
+
+### Request body
+
+```json
+{
+  "policy_yaml": "<the YAML content>",
+  "reason": "Emergency override for CVE-2026-XYZ; revert by 2026-10-01"
+}
+```
+
+### Response
+
+```json
+{
+  "data": {
+    "id": "pol_01JAG...",
+    "source": "dashboard-override",
+    "policy_hash": "sha256:...",
+    "expires_at": "2026-10-01T00:00:00Z"
+  }
+}
+```
+
+## Delete a policy override
+
+```
+DELETE /v1/policies/:policy_id
+```
+
+Removes a `dashboard-override`. Repo policies are not deletable via API — commit a change to the repo.
+
+## Related
+
+- [Policy DSL](/concepts/policy-dsl)
+- [Audit log](/concepts/audit-log) — every policy change is auditable

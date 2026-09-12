@@ -1,0 +1,186 @@
+---
+title: "Policy DSL"
+description: "YAML rules that turn Trikon's evidence into a decision."
+---
+
+The Trikon policy is a YAML file at `.trikon/policy.yaml` in your repo. It defines how Trikon turns verification evidence into a verdict.
+
+## Guiding principles
+
+1. **Explicit, in-repo, version-controlled.** The policy lives with the code it governs. No hidden SaaS settings.
+2. **Deny by default.** If no rule matches, the verdict is `require_human`. Trikon never silently allows.
+3. **Terminal-first evaluation.** Rules are read top-to-bottom. The first rule that matches AND emits a terminal decision (`allow` / `block` / `require_human`) wins.
+4. **Every rule leaves a trace.** Even non-matching rules are recorded in `evidence.policy_results` for audit.
+
+## A complete example
+
+```yaml
+version: 1
+
+weights:
+  impacted_modules: 1.0
+  impacted_public_apis: 3.0
+  impacted_test_files: 0.5
+  cross_package_hops: 2.0
+  sensitive_path_touch: 5.0
+
+sensitive_paths:
+  - "auth/**"
+  - "payments/**"
+  - "**/migrations/**"
+
+rules:
+  - name: "sensitive path requires human"
+    when:
+      any_path_matches: ["auth/**", "payments/**", "**/migrations/**"]
+    then: require_human
+    reason: "Change touches a sensitive subsystem."
+
+  - name: "impacted tests failed"
+    when:
+      verification.tests.status: failed
+    then: block
+
+  - name: "new static-analysis errors"
+    when:
+      verification.static.new_errors: { gt: 0 }
+    then: block
+
+  - name: "large blast radius requires human"
+    when:
+      change.blast_radius.score: HIGH
+    then: require_human
+
+  - name: "green, low-blast auto-allow"
+    when:
+      verification.tests.status: passed
+      verification.static.new_errors: { eq: 0 }
+      change.blast_radius.score: LOW
+    then: allow
+
+  - name: "default"
+    then: require_human
+    reason: "No prior rule matched."
+```
+
+## Schema (v1)
+
+```yaml
+version: 1                       # int, currently 1
+weights:                         # optional; overrides default blast-radius weights
+  <name>: <float>
+sensitive_paths:                 # optional; adds a bonus to blast_radius_numeric
+  - <glob>
+rules:                           # required, at least one
+  - name: <str>                  # required, must be unique in the file
+    when:                        # optional; empty when = always matches
+      <condition>: <value>
+      ...
+    then: allow|block|require_human|warn    # required
+    reason: <str>                # optional
+```
+
+## Available conditions
+
+### Path matching
+
+```yaml
+when:
+  any_path_matches:              # OR across globs; any changed file matches any glob
+    - "payments/**"
+    - "billing/*.py"
+```
+
+```yaml
+when:
+  no_path_matches:               # negation: none of the changed files match
+    - "docs/**"
+```
+
+### Blast-radius bucket
+
+```yaml
+when:
+  change.blast_radius.score: HIGH   # LOW | MEDIUM | HIGH
+```
+
+### Test status
+
+```yaml
+when:
+  verification.tests.status: failed  # passed | failed | skipped
+```
+
+### Static-check delta
+
+```yaml
+when:
+  verification.static.new_errors:
+    gt: 0                        # supports eq | gt | lt | gte | lte
+```
+
+### Combining conditions
+
+Multiple keys in the same `when` are ANDed:
+
+```yaml
+when:
+  verification.tests.status: passed
+  verification.static.new_errors:
+    eq: 0
+  change.blast_radius.score: LOW
+```
+
+**There is no explicit OR in v1.** Use multiple rules for OR semantics.
+
+## Terminal decisions
+
+| Decision | Semantics | CLI exit code |
+| --- | --- | --- |
+| `allow` | Safe to merge / deploy. | 0 |
+| `block` | Do not merge under any circumstance. | 1 |
+| `require_human` | Merge only after human review. | 2 |
+| `warn` | Not terminal. Attaches a reason to the verdict; evaluation continues. |  |
+
+## Example patterns
+
+<AccordionGroup>
+  <Accordion title="Auto-merge safe dependency bumps">
+    ```yaml
+    - name: "auto-allow safe deps bumps"
+      when:
+        any_path_matches: ["requirements*.txt", "poetry.lock"]
+        no_path_matches: ["**/*.py"]
+        verification.tests.status: passed
+        verification.static.new_errors: { eq: 0 }
+      then: allow
+    ```
+  </Accordion>
+  <Accordion title="Never allow schema migrations from an agent">
+    ```yaml
+    - name: "migrations always require human"
+      when:
+        any_path_matches: ["**/migrations/**"]
+      then: require_human
+      reason: "Schema migrations must be human-reviewed."
+    ```
+  </Accordion>
+  <Accordion title="Block if agent didn't include tests">
+    ```yaml
+    - name: "no test changes on non-trivial diff"
+      when:
+        change.blast_radius.score: MEDIUM
+        no_path_matches: ["tests/**", "**/test_*.py"]
+      then: block
+      reason: "Non-trivial change without test coverage."
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Bumping the schema version
+
+Trikon's policy loader is strict: unknown keys fail loudly with a schema error. When we ship a v2 schema, existing v1 policies keep working. Migrations are additive.
+
+## Where the policy lives
+
+`.trikon/policy.yaml` at the root of your repo. If the file is missing, Trikon falls back to a built-in default policy that defaults to `require_human` for everything except green low-blast changes.

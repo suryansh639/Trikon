@@ -1,0 +1,97 @@
+---
+title: "Unideploy Autopilot"
+description: "Pre-apply verification gate for Unideploy's 24/7 unattended DevOps agent."
+---
+
+[Unideploy](https://unideploy.com) autopilot runs unattended against real cloud infrastructure. Trikon is the pre-apply gate that verifies every proposed change before autopilot executes it. This is Trikon's first internal customer and the reference deployment.
+
+## The pattern
+
+```
+Unideploy autopilot proposes change
+    │
+    ▼
+Trikon verify_change  ─────────┐
+    │                          │
+    ▼                          │
+Verdict                        │
+    │                          │
+    ├── allow          ────────┤   autopilot applies
+    ├── block          ────────┤   autopilot stops + alerts Slack
+    └── require_human  ────────┘   autopilot opens PR for review
+```
+
+## Configure autopilot
+
+Edit `~/.Unideploy/autopilot.toml`:
+
+```toml
+[schedules.nightly-refactor]
+cron   = "0 3 * * *"
+prompt = "Apply pending refactor PRs to non-critical services."
+
+# Pre-apply gate. Fails autopilot if Trikon does not return `allow`.
+pre_apply_check = { command = "trikon verify --repo ${WORK_DIR} --base ${BASE_SHA} --head ${HEAD_SHA} -o json", fail_on = ["block", "require_human"] }
+```
+
+`WORK_DIR`, `BASE_SHA`, and `HEAD_SHA` are injected by autopilot. See [Unideploy autopilot docs](https://docs.unideploy.com/concepts/autopilot) for the full env-var contract.
+
+## Alternative: MCP tool
+
+If you already run Trikon's MCP server, register it in Unideploy's config:
+
+```toml
+[servers.trikon]
+transport = "tcp"
+url = "http://127.0.0.1:4801"
+
+[schedules.nightly-refactor]
+cron = "0 3 * * *"
+prompt = "Apply pending refactor PRs to non-critical services."
+required_tools = ["trikon.verify_change"]
+```
+
+Autopilot's agent will call `verify_change` as part of its reasoning chain and stop if the verdict is not `allow`.
+
+## Why this matters
+
+Unideploy autopilot's whole value proposition is unattended action. Without a verification gate, autopilot depends entirely on the LLM's judgment. With Trikon, autopilot's decisions are backed by evidence: impacted tests actually ran; static analysis actually passed; the blast radius was actually measured.
+
+## Recommended autopilot policy
+
+For services where autopilot has apply permissions, use this Trikon policy in the target repo (`.trikon/policy.yaml`):
+
+```yaml
+version: 1
+
+rules:
+  # Never let autopilot touch sensitive systems.
+  - name: "sensitive systems require human"
+    when:
+      any_path_matches: ["auth/**", "payments/**", "billing/**", "**/migrations/**"]
+    then: require_human
+
+  # Any test failure blocks.
+  - name: "test failures block"
+    when:
+      verification.tests.status: failed
+    then: block
+
+  # Small, green changes auto-allow.
+  - name: "green low-blast auto-allow"
+    when:
+      verification.tests.status: passed
+      verification.static.new_errors: { eq: 0 }
+      change.blast_radius.score: LOW
+    then: allow
+
+  # Everything else routes to a human.
+  - name: "default"
+    then: require_human
+```
+
+## Related
+
+- [Unideploy autopilot](https://docs.unideploy.com/concepts/autopilot)
+- [Policy DSL](/concepts/policy-dsl)
+- [Verdicts](/concepts/verdicts)

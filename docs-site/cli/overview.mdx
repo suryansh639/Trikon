@@ -1,0 +1,53 @@
+---
+title: "CLI Overview"
+description: "The trikon command — full reference."
+---
+
+Trikon ships as a single command with sub-commands. Runs on Python 3.11+.
+
+```bash
+trikon --help
+```
+
+## Available commands
+
+| Command | Purpose |
+| --- | --- |
+| [`trikon verify`](/cli/verify) | Run the full verification pipeline against a git change set. |
+| [`trikon init`](/cli/init) | Scaffold `.trikon/policy.yaml` in the current repo. |
+| [`trikon mcp serve`](/cli/mcp) | Start the MCP server for agent integrations. |
+| `trikon coverage build` | Build or refresh the coverage map. |
+| `trikon audit export` | Export the local audit log as JSONL. |
+| `trikon version` | Print the installed version. |
+
+Every command supports `--help` for its own flags.
+
+## Global flags
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--repo <path>` | current dir | Repository to operate on |
+| `--verbose` / `-v` | off | Verbose logging to stderr |
+| `--quiet` / `-q` | off | Suppress non-error output |
+
+## Exit codes
+
+All commands follow this convention:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success (or verdict = `allow`) |
+| `1` | Verdict = `block` |
+| `2` | Verdict = `require_human` |
+| `3` | Bad user input (invalid flags, missing repo) |
+| `4` | Environment problem (Docker not running, policy invalid) |
+| `5+` | Internal error |
+
+## Environment variables
+
+| Var | Purpose |
+| --- | --- |
+| `TRIKON_STATE_DIR` | Override `.trikon/` state directory location. |
+| `TRIKON_LOG_LEVEL` | `DEBUG`, `INFO`, `WARN`, `ERROR`. Default `INFO`. |
+| `TRIKON_API_KEY` | Hosted tier API key (Team+). |
+| `TRIKON_API_URL` | Override the hosted API base URL. Enterprise self-hosted only. |

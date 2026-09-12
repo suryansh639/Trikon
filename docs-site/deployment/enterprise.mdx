@@ -1,0 +1,112 @@
+---
+title: "Enterprise Deployment"
+description: "Self-hosted verification runner in your VPC. Only the Verdict JSON leaves your perimeter."
+---
+
+For banks, healthcare, defense, and any org whose source code cannot leave their VPC. We supply a Terraform module; you deploy it in your AWS or GCP account.
+
+<Info>
+Enterprise is an annual contract, from **$60,000 / year**. See [Pricing](/pricing) for sizing. Start with `sales@trikon.dev`.
+</Info>
+
+## The perimeter guarantee
+
+```
+    Your AWS/GCP account                     Our control plane
+    ┌──────────────────────────┐            ┌────────────────────┐
+    │  Trikon runner           │◄───────────│  API + dashboard   │
+    │  (ECS/EKS, systemd)      │  auth+jobs │  + audit + billing │
+    │                          │            │                    │
+    │  • clones repo locally   │            │  never sees        │
+    │  • runs sandbox locally  │            │  customer source   │
+    │  • sends only Verdict    │───verdict─►│                    │
+    │    JSON out              │            │                    │
+    └──────────────────────────┘            └────────────────────┘
+```
+
+Only the `Verdict` JSON crosses your VPC boundary. No source, no diff, no test output, no environment vars.
+
+## What ships with Enterprise
+
+- Everything in Team tier
+- Self-hosted runner via Terraform module
+- SSO (SAML, OIDC)
+- Centralized policy across many repos
+- **Unlimited execution time per verdict**
+- SOC2 Type 2 report + DPA + subprocessor list
+- Custom retention (SOC2 / HIPAA / GDPR-aligned)
+- 99.9% availability SLA + 24-hour incident response
+- Dedicated Slack channel
+- Onboarding + policy-tuning services (5-10 hours included)
+
+## Prerequisites
+
+- AWS account (us-east-1 or a region we support) or GCP project
+- Terraform 1.6+
+- A VPC with two private subnets in different AZs
+- IAM/service-account credentials with permission to create ECS/EKS + related resources
+- Outbound HTTPS from the private subnets to Trikon control-plane endpoints (allowlisted domains, no wildcards)
+
+## Onboarding (4-8 weeks)
+
+<Steps>
+  <Step title="Initial sales + security review">
+    First call: use case, scale, compliance requirements. Sales reviews. NDA if needed.
+  </Step>
+  <Step title="Contract + DPA + security addendum">
+    Standard MSA + DPA. Any required custom terms (BAA for HIPAA, etc.) negotiated here.
+  </Step>
+  <Step title="Terraform module released to your account">
+    We provision an S3 bucket in your account, publish the Terraform module + policy-signed runner container image.
+  </Step>
+  <Step title="You deploy">
+    Terraform applies. Runner comes up. Registers with our control plane.
+  </Step>
+  <Step title="SSO wiring">
+    SAML/OIDC configured. Team members log in via your IdP.
+  </Step>
+  <Step title="Pilot period">
+    2-4 weeks of monitored operation on a subset of repos. Weekly review calls.
+  </Step>
+  <Step title="Rollout">
+    Onboard remaining repos. Managed policy tuning included.
+  </Step>
+</Steps>
+
+## Compliance
+
+Trikon holds:
+
+- SOC2 Type 2 (report available under NDA)
+- ISO 27001 (roadmap; timeline in contract)
+
+Enterprise-specific:
+
+- Custom retention per contract
+- Audit-log export in JSONL, SIEM-friendly
+- BAA available for HIPAA
+- FedRAMP status: contact sales
+
+## Support
+
+- Dedicated Slack channel with founder access for first year
+- 24-hour SLA for Sev1 incidents
+- Named customer success contact
+- Quarterly business review
+
+## Pricing sizing
+
+```
+Base:        $60,000 / year   (up to 25 repos, up to 3 agents, 1 region)
++ Repos:     $1,000 / year per repo beyond 25
++ Agents:    $5,000 / year per agent beyond 3
++ Compliance: $20,000 / year per custom framework (HIPAA, FedRAMP, ISO 27001)
++ Regions:   $10,000 / year per additional region
+```
+
+Full pricing rationale in the [Pricing](/pricing) doc.
+
+## Related
+
+- [Trust & Security](/security)
+- [Team tier deployment](/deployment/team-tier) — if the perimeter guarantee is not required

@@ -1,0 +1,76 @@
+---
+title: "API Overview"
+description: "REST API for the Trikon hosted control plane."
+---
+
+<Info>
+The REST API is available on **Team** and **Enterprise** tiers. OSS local mode does not have a hosted API — it operates entirely on your machine.
+</Info>
+
+## Base URL
+
+- **Team tier (hosted)**: `https://api.trikon.dev/v1`
+- **Enterprise self-hosted**: your control-plane URL, set via `TRIKON_API_URL`
+
+## Authentication
+
+All requests require a bearer token:
+
+```
+Authorization: Bearer <TRIKON_API_KEY>
+```
+
+Get your API key from `dashboard.trikon.dev` → Settings → API Keys.
+
+Rotate keys any time. Old keys are revoked immediately.
+
+## Rate limits
+
+Per API key:
+
+- 100 requests per minute (read endpoints)
+- 20 requests per minute (write endpoints)
+
+Verdict-emitting is separate — see [Team tier](/deployment/team-tier#rate-limits).
+
+Responses when rate-limited: `HTTP 429` with `Retry-After` header.
+
+## Response format
+
+All responses are JSON.
+
+```json
+{
+  "data": { ... },
+  "meta": { "request_id": "01JAG...", "took_ms": 42 }
+}
+```
+
+Errors:
+
+```json
+{
+  "error": {
+    "code": "invalid_argument" | "not_found" | "unauthorized" | "rate_limited" | "internal",
+    "message": "human-readable",
+    "request_id": "01JAG..."
+  }
+}
+```
+
+## Endpoints
+
+| Endpoint | Purpose |
+| --- | --- |
+| [`GET /v1/verdicts`](/api-reference/verdicts) | List verdicts |
+| [`GET /v1/verdicts/:id`](/api-reference/verdicts) | Get a single verdict |
+| [`POST /v1/verdicts`](/api-reference/verdicts) | Submit a verdict for verification (Enterprise self-hosted only) |
+| [`GET /v1/policies`](/api-reference/policies) | List repo policies |
+| [`GET /v1/policies/:id`](/api-reference/policies) | Get a policy |
+| [`GET /v1/audit/export`](/concepts/audit-log) | Export audit log as JSONL |
+
+## Versioning
+
+The API is versioned via the URL prefix (`/v1`). We bump the version only when we break existing endpoints. Additive changes (new fields, new endpoints) do not bump the version.
+
+Deprecation notice: at least 6 months before removing anything from `/v1`.

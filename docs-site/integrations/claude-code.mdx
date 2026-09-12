@@ -1,0 +1,112 @@
+---
+title: "Claude Code"
+description: "Wire Trikon into Claude Code so every proposed change is verified before it lands."
+---
+
+Claude Code invokes Trikon through the MCP protocol. Once wired up, you can ask Claude to verify a change and it will call `verify_change` automatically.
+
+## Setup
+
+<Steps>
+  <Step title="Install Trikon locally">
+    ```bash
+    pip install trikon
+    ```
+  </Step>
+  <Step title="Add the MCP server to Claude Code's config">
+    Edit `~/.claude/mcp.json` (macOS/Linux) or `%APPDATA%\Claude\mcp.json` (Windows):
+
+    ```json
+    {
+      "mcpServers": {
+        "trikon": {
+          "command": "trikon",
+          "args": ["mcp", "serve", "--stdio"]
+        }
+      }
+    }
+    ```
+  </Step>
+  <Step title="Restart Claude Code">
+    The `verify_change` tool now appears in Claude Code's available-tools list.
+  </Step>
+  <Step title="Initialize your repo">
+    Once, in each repo you want verified:
+
+    ```bash
+    cd your-repo
+    trikon init
+    trikon coverage build   # one-time; see Blast radius docs
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+In any Claude Code session working on the repo:
+
+```
+> Add retry-with-backoff to the payment gateway.
+  Before you finalize, verify this change with Trikon.
+
+Claude Code:
+[calls verify_change with base=HEAD, head=working-tree-diff]
+[verdict returned]
+
+The change was verified. Blast radius is MEDIUM (touches payments, orders,
+api, workers). Two impacted tests failed:
+  - tests/test_worker.py::test_worker_respects_2s_deadline
+  - tests/api/test_payments.py::test_charge_endpoint_timeout
+
+The retry loop sleeps 3s x 5 attempts, but the worker deadline is 2s.
+I'll adjust the backoff to exponential with a shorter base.
+```
+
+Claude Code will not merge the change until Trikon returns `decision: allow`.
+
+## Recommended session pattern
+
+Add a project-scope instruction so Claude verifies every non-trivial change without being asked:
+
+`.claude/instructions.md`:
+
+```markdown
+For any change touching more than one file, call Trikon's `verify_change` tool
+before finalizing. Treat `block` as a hard stop. Treat `require_human` as
+"open a PR; do not merge."
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Claude Code doesn't see the tool">
+    - Confirm `trikon --help` works from the same shell Claude Code launched from.
+    - Check `~/.claude/mcp.json` syntax (must be valid JSON).
+    - Restart Claude Code completely (not just reload).
+  </Accordion>
+  <Accordion title="Verdict takes too long">
+    Trikon runs impacted tests inside a Docker sandbox by default. For faster iteration:
+
+    ```json
+    {
+      "mcpServers": {
+        "trikon": {
+          "command": "trikon",
+          "args": ["mcp", "serve", "--stdio", "--sandbox=none"]
+        }
+      }
+    }
+    ```
+
+    `--sandbox=none` runs tests on the host. Not recommended for production.
+  </Accordion>
+  <Accordion title="Claude retries after a 'block' verdict">
+    Add an explicit instruction: "On `block`, stop and surface the failing tests. Do not retry the same approach."
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [MCP integration](/integrations/mcp) — full protocol contract
+- [Cursor](/integrations/cursor) — same pattern for Cursor
+- [Policy DSL](/concepts/policy-dsl) — control what auto-allows vs requires human

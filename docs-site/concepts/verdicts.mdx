@@ -1,0 +1,142 @@
+---
+title: "Verdicts"
+description: "The output of every Trikon run. A machine-readable decision plus structured evidence."
+---
+
+Every call to Trikon returns a **Verdict**: a machine-readable object with a decision, a reason, and structured evidence. This is what an autonomous agent consumes to decide whether to proceed.
+
+## Shape
+
+```typescript
+type Verdict = {
+  decision: "allow" | "block" | "require_human"
+  reason: string
+  matched_rule: string | null
+  evidence: Evidence
+  audit_id: string        // UUID
+  created_at: string      // ISO-8601
+  schema_version: 1
+}
+```
+
+The `Evidence` object contains:
+
+- `change` — the [ImpactSet](/concepts/blast-radius) (impacted files, symbols, tests, blast-radius score)
+- `verification` — test outcomes, static-check findings, plugin outputs
+- `policy_results` — every rule evaluation, whether matched or not
+
+Full Pydantic model: [`trikon/evidence/report.py`](https://github.com/suryansh639/Trikon/blob/main/trikon/evidence/report.py).
+
+## The three decisions
+
+<CardGroup cols={3}>
+  <Card title="allow" icon="check">
+    Safe to merge or deploy. Auto-mergeable by policy.
+  </Card>
+  <Card title="block" icon="ban">
+    Do not merge under any circumstance. Evidence contains the failing signal.
+  </Card>
+  <Card title="require_human" icon="user-check">
+    Merge only after human review. Not a soft warning.
+  </Card>
+</CardGroup>
+
+**Rule of the system**: on error, always `require_human`. Never fail-open to `allow`.
+
+## How to consume a Verdict
+
+### From an AI agent (via MCP)
+
+```python
+# The agent has already produced a proposed change.
+result = mcp_client.call_tool("verify_change", {
+    "repo_path": "/workspace/myrepo",
+    "base_sha": "abc123",
+    "head_sha": "def456",
+})
+verdict = json.loads(result["content"])
+
+if verdict["decision"] == "allow":
+    proceed_with_merge()
+elif verdict["decision"] == "block":
+    surface_to_operator(verdict["evidence"]["verification"]["tests"]["failures"])
+    stop()
+else:  # require_human
+    open_pull_request_only(verdict)
+```
+
+### From a shell script
+
+```bash
+if trikon verify --base main --head HEAD -o json > verdict.json; then
+    echo "safe to deploy"
+else
+    exit_code=$?
+    if [ $exit_code -eq 1 ]; then
+        echo "BLOCK"
+    else
+        echo "REQUIRE_HUMAN"
+    fi
+fi
+```
+
+## Reading the evidence
+
+The evidence answers *why* the verdict landed. A typical `block` verdict evidence:
+
+```json
+{
+  "evidence": {
+    "change": {
+      "changed_files": ["payments/retry.py", "payments/gateway.py"],
+      "impacted_modules": ["payments", "orders", "api", "workers"],
+      "impacted_public_apis": [{ "qualified_name": "payments.gateway.charge", ... }],
+      "impacted_tests": [
+        "tests/test_retry.py",
+        "tests/test_gateway.py",
+        "tests/test_worker.py",
+        "tests/api/test_payments.py"
+      ],
+      "blast_radius_score": "MEDIUM",
+      "blast_radius_numeric": 11.5
+    },
+    "verification": {
+      "tests": {
+        "status": "failed",
+        "total": 27, "passed": 25, "failed": 2, "skipped": 0,
+        "failures": [
+          {
+            "node_id": "tests/test_worker.py::test_worker_respects_2s_deadline",
+            "outcome": "failed",
+            "failure_summary": "worker exceeded 2000ms deadline (took 6013ms)"
+          }
+        ],
+        "duration_ms": 8400
+      },
+      "static": { "new_errors": 0, "new_warnings": 0 }
+    },
+    "policy_results": [
+      { "rule_name": "impacted tests failed", "matched": true, "would_emit": "block" }
+    ]
+  }
+}
+```
+
+## Audit-log entries
+
+Every verdict is written to a hash-chained audit log with:
+
+- `audit_id` (UUID)
+- `previous_hash` (SHA-256 of previous entry)
+- Verdict JSON
+- Signer identity (repo, actor, agent-id if provided)
+
+Local mode: `.trikon/audit.log`. Hosted mode: DynamoDB with a nightly S3 export.
+
+See [Audit log](/concepts/audit-log) for the full schema and how to export for compliance.
+
+## Versioning
+
+The Verdict schema is versioned via `schema_version`. We bump this only when we break the shape. Additive fields (new optional keys) do NOT bump the version.
+
+Downstream consumers should read `schema_version` and reject unknown values rather than silently ignore them.

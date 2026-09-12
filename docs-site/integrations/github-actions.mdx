@@ -1,0 +1,99 @@
+---
+title: "GitHub Actions"
+description: "Run Trikon in your own CI runner. Free with the OSS engine."
+---
+
+Prefer to run Trikon in your own CI instead of installing the hosted GitHub App? Use the `trikon` CLI in any workflow. No account, no license key.
+
+## Minimal workflow
+
+`.github/workflows/verify.yml`:
+
+```yaml
+name: Trikon verify
+on: pull_request
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # need history for the diff
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Trikon
+        run: pip install trikon
+
+      - name: Verify change
+        run: |
+          trikon verify \
+            --base ${{ github.event.pull_request.base.sha }} \
+            --head ${{ github.event.pull_request.head.sha }} \
+            -o markdown | tee $GITHUB_STEP_SUMMARY
+```
+
+Exit codes:
+
+| Trikon says | CI outcome |
+| --- | --- |
+| `allow` (exit 0) | Green check |
+| `block` (exit 1) | Red check; PR cannot merge |
+| `require_human` (exit 2) | Red check; PR cannot merge until reviewed |
+
+## Cache the coverage map
+
+Trikon's coverage map takes a few minutes to build. Cache it between runs:
+
+```yaml
+      - name: Cache Trikon state
+        uses: actions/cache@v4
+        with:
+          path: .trikon/state.db
+          key: trikon-state-${{ hashFiles('**/*.py') }}
+          restore-keys: |
+            trikon-state-
+
+      - name: Build coverage map (if missing)
+        run: |
+          if [ ! -f .trikon/state.db ]; then
+            trikon coverage build
+          fi
+```
+
+## Post the verdict to the PR
+
+If you want a real PR comment instead of just a job summary, use the `gh` CLI:
+
+```yaml
+      - name: Verify and comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          trikon verify \
+            --base ${{ github.event.pull_request.base.sha }} \
+            --head ${{ github.event.pull_request.head.sha }} \
+            -o markdown > verdict.md
+          EXIT=$?
+          gh pr comment ${{ github.event.pull_request.number }} --body-file verdict.md
+          exit $EXIT
+```
+
+## Cost comparison
+
+| Approach | Cost |
+| --- | --- |
+| OSS engine + GitHub Actions | Free (uses your GitHub Actions minutes) |
+| Team tier GitHub App | $299 / repo / month |
+| Enterprise self-hosted | Custom |
+
+Use the GitHub Actions approach if you already have generous CI minutes and don't need the hosted dashboard, hash-chained audit log, or Slack alerts. Upgrade to Team tier when you want managed operations.
+
+## Related
+
+- [GitHub App](/integrations/github-app) — hosted alternative
+- [CLI reference](/cli/verify)

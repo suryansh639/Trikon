@@ -1,0 +1,112 @@
+---
+title: "Installation"
+description: "Detailed installation options for every environment."
+---
+
+## Local install
+
+<CodeGroup>
+```bash pip
+pip install trikon
+```
+```bash pipx
+pipx install trikon
+```
+```bash uv
+uv tool install trikon
+```
+</CodeGroup>
+
+Trikon requires Python 3.11 or newer.
+
+## Verify the install
+
+```bash
+trikon version
+# → 0.1.0
+trikon --help
+```
+
+## Install for a project (with dev deps)
+
+Add Trikon as a dev dependency in your Python project:
+
+<CodeGroup>
+```toml pyproject.toml
+[project.optional-dependencies]
+dev = ["trikon>=0.1"]
+```
+```bash requirements-dev.txt
+trikon>=0.1
+```
+</CodeGroup>
+
+## Install the GitHub App (Team tier)
+
+<Info>
+The hosted GitHub App is available on the Team tier. See [Pricing](/pricing).
+</Info>
+
+1. Visit `https://github.com/apps/trikon` (once published).
+2. Click **Install**.
+3. Grant access to the repos you want to verify.
+4. Trikon opens a pull request to add `.trikon/policy.yaml` to each selected repo.
+5. Merge that PR to activate.
+
+## Install the self-hosted runner (Enterprise)
+
+<Info>
+Enterprise-only. Contact `sales@trikon.dev`.
+</Info>
+
+Trikon ships a Terraform module that provisions the verification worker inside your AWS account. Only the `Verdict` JSON leaves your perimeter.
+
+Full deployment: [Enterprise deployment](/deployment/enterprise).
+
+## Docker sandbox base image
+
+Trikon runs impacted tests inside a Docker container. You need Docker installed and running for the sandboxed backend.
+
+Skip Docker with `--sandbox=none` for local development (tests run on the host). Not recommended for production or CI.
+
+## Uninstall
+
+```bash
+pip uninstall trikon
+```
+
+Then optionally remove per-repo state:
+
+```bash
+rm -rf .trikon/
+```
+
+Your policy file (`.trikon/policy.yaml`) is committed to git and untouched by uninstall.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Error: 'trikon: command not found'">
+    Verify Python's script directory is on PATH:
+
+    ```bash
+    python3 -m site --user-base
+    # → /home/you/.local
+    # Add /home/you/.local/bin to PATH
+    ```
+
+    Or reinstall with `pipx` which manages its own PATH.
+  </Accordion>
+  <Accordion title="Error: 'Docker daemon not running'">
+    Start Docker Desktop (Windows/macOS) or `sudo systemctl start docker` (Linux).
+
+    To skip Docker for local iteration:
+
+    ```bash
+    trikon verify --sandbox=none --base HEAD~1 --head HEAD
+    ```
+  </Accordion>
+  <Accordion title="Coverage-map build is very slow">
+    First-time build runs pytest with coverage instrumentation, ~3-5x slower than a normal run. Cached after that. Rebuild automatically when the map ages past 7 days.
+  </Accordion>
+</AccordionGroup>

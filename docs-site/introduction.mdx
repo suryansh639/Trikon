@@ -1,0 +1,80 @@
+---
+title: "Introduction"
+description: "The verification layer for autonomous AI coding agents."
+---
+
+## What Trikon does
+
+Trikon sits between an autonomous AI coding agent and production. Before the agent merges a PR or deploys a change, Trikon:
+
+1. Analyzes the change's **blast radius** using an AST-based dependency graph.
+2. Executes the **targeted subset** of tests, static checks, and policy rules that the change actually affects.
+3. Emits a machine-readable **Verdict** — `ALLOW`, `BLOCK`, or `REQUIRE_HUMAN` — with structured evidence.
+4. Writes a hash-chained audit-log entry for compliance.
+
+<Card title="Read the worked example" icon="book-open" href="/quickstart">
+  See a real "AI agent opens a PR" scenario end-to-end.
+</Card>
+
+## Why this exists
+
+The bottleneck in software engineering has moved from writing code to verifying it. Human review does not scale with agent output. Human review is also the wrong tool for unattended agents that run at 3 a.m.
+
+The market is full of tools that ask an LLM whether a diff *looks* correct. Trikon executes the code and produces evidence.
+
+## When to use Trikon
+
+| Situation | Use Trikon? |
+| --- | --- |
+| Unattended AI agent commits or merges without human review | **Yes.** This is the wedge. |
+| Nightly refactor / autofix bot opens dozens of PRs | **Yes.** |
+| You run Unideploy autopilot against production infra | **Yes.** As the pre-apply gate. |
+| Team of 3 developers reviewing each other's PRs manually | Probably not. Use Trikon later when you deploy AI agents. |
+| You want NL comments on a diff | Not our product. Use CodeRabbit or Greptile. |
+
+## How Trikon differs from AI PR reviewers
+
+| | AI PR reviewers (CodeRabbit, Greptile, Qodo) | **Trikon** |
+| --- | --- | --- |
+| Mechanism | LLM opinion on a diff | Executed verification (tests, static checks, blast radius) |
+| Assumes | A human reviewer will read the comments | An autonomous agent needs a machine-readable decision |
+| Output | Free-text comments | Structured `Verdict` + hash-chained audit record |
+| Buyer | Eng manager / individual dev | Platform, security, governance team |
+| Budget line | Code review productivity | Governance / risk / compliance |
+
+## The three deployment modes
+
+<CardGroup cols={3}>
+  <Card title="Local OSS" icon="code" href="/installation">
+    Free. Apache-2.0. `pip install trikon`. Runs entirely on your machine or your CI runner.
+  </Card>
+  <Card title="Team Tier" icon="cloud" href="/deployment/team-tier">
+    Hosted GitHub App. $299/repo/month. Managed verification, dashboard, alerts.
+  </Card>
+  <Card title="Enterprise" icon="building-shield" href="/deployment/enterprise">
+    Self-hosted runner in your VPC. Only `Verdict` JSON leaves your perimeter.
+  </Card>
+</CardGroup>
+
+## Get started
+
+<Steps>
+  <Step title="Install">
+    ```bash
+    pip install trikon
+    ```
+  </Step>
+  <Step title="Initialize a policy">
+    ```bash
+    cd your-python-repo
+    trikon init
+    ```
+  </Step>
+  <Step title="Verify a change">
+    ```bash
+    trikon verify --base main --head HEAD
+    ```
+  </Step>
+</Steps>
+
+Full walk-through: [Quickstart](/quickstart).

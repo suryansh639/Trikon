@@ -1,0 +1,64 @@
+---
+title: "GitHub App"
+description: "Hosted verification on every pull request. Team tier."
+---
+
+<Info>
+The GitHub App is a **Team tier** feature. See [Pricing](/pricing) or install locally with the [OSS CLI](/installation).
+</Info>
+
+## What it does
+
+The Trikon GitHub App listens for pull-request events on repos you install it on. For every PR, it:
+
+1. Downloads the diff.
+2. Runs the full Trikon verification pipeline in our hosted infrastructure.
+3. Posts a GitHub check-run (green/yellow/red).
+4. Adds a Markdown-formatted verdict as a PR comment.
+5. Writes the verdict to your dashboard and audit log.
+
+## Install
+
+<Steps>
+  <Step title="Visit the Marketplace listing">
+    Go to `https://github.com/apps/trikon` and click **Install**.
+  </Step>
+  <Step title="Grant access">
+    Grant access to specific repos (recommended) or your entire org.
+  </Step>
+  <Step title="Merge the auto-generated policy PR">
+    Trikon opens a PR in each selected repo adding `.trikon/policy.yaml` from the default template. Review and merge.
+  </Step>
+  <Step title="Open a test PR">
+    Any PR opened after activation will trigger a Trikon verdict within 90 seconds.
+  </Step>
+</Steps>
+
+## Permissions Trikon requests
+
+| Permission | Why |
+| --- | --- |
+| `pull_requests: write` | Post PR comments |
+| `checks: write` | Report verdict as a check-run |
+| `contents: read` | Clone the repo to run tests |
+| `metadata: read` | Read repo info |
+
+Trikon does not request `workflows: write`, `admin: *`, `packages: *`, or any billing scope.
+
+## Configuration
+
+Everything lives in `.trikon/policy.yaml` in your repo. See [Policy DSL](/concepts/policy-dsl).
+
+Per-repo overrides are supported by placing `.trikon/policy.yaml` in each repo.
+
+## Uninstalling
+
+`https://github.com/settings/installations` → find Trikon → **Uninstall**.
+
+Your data on our side is retained per your tier's retention policy (see [Trust](/security)), then deleted.
+
+## Related
+
+- [Team tier deployment](/deployment/team-tier)
+- [Trust & Security](/security)
+- [Pricing](/pricing)

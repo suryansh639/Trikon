@@ -1,0 +1,91 @@
+# Trikon default policy.
+#
+# Copy this into your repo as `.trikon/policy.yaml` and edit for your codebase.
+# Rules are evaluated top-to-bottom. The first rule that matches AND emits a
+# terminal decision (allow / block / require_human) wins.
+#
+# Change `weights` to bias the blast-radius score for your codebase. Increase
+# `impacted_public_apis` on library code; decrease `impacted_modules` on large
+# monorepos where every change touches many modules.
+#
+# Anything under `sensitive_paths` is auto-flagged in the blast-radius score
+# and can be referenced by rules via `any_path_matches`.
+
+version: 1
+
+weights:
+  impacted_modules: 1.0
+  impacted_public_apis: 3.0
+  impacted_test_files: 0.5
+  cross_package_hops: 2.0
+  sensitive_path_touch: 5.0
+
+sensitive_paths:
+  - "auth/**"
+  - "billing/**"
+  - "payments/**"
+  - "**/migrations/**"
+
+rules:
+
+  # -----------------------------------------------------------------
+  # 1) Sensitive subsystems ALWAYS require a human.
+  #    This is a strong default. Loosen it deliberately if you must.
+  # -----------------------------------------------------------------
+  - name: "sensitive path requires human"
+    when:
+      any_path_matches:
+        - "auth/**"
+        - "billing/**"
+        - "payments/**"
+        - "**/migrations/**"
+    then: require_human
+    reason: "Change touches a sensitive subsystem."
+
+  # -----------------------------------------------------------------
+  # 2) Any test failure blocks the change.
+  # -----------------------------------------------------------------
+  - name: "impacted tests failed"
+    when:
+      verification.tests.status: failed
+    then: block
+    reason: "One or more impacted tests failed."
+
+  # -----------------------------------------------------------------
+  # 3) A new static-analysis error blocks. Preexisting noise is ignored.
+  # -----------------------------------------------------------------
+  - name: "new static-analysis errors"
+    when:
+      verification.static.new_errors:
+        gt: 0
+    then: block
+    reason: "Change introduced new static-analysis errors."
+
+  # -----------------------------------------------------------------
+  # 4) Large blast radius always requires a human, even if tests pass.
+  # -----------------------------------------------------------------
+  - name: "large blast radius requires human"
+    when:
+      change.blast_radius.score: HIGH
+    then: require_human
+    reason: "Blast radius is HIGH; a human should review scope."
+
+  # -----------------------------------------------------------------
+  # 5) Green + small blast + no new lint noise → auto-allow.
+  #    This is what unlocks unattended agent execution.
+  # -----------------------------------------------------------------
+  - name: "green, low-blast auto-allow"
+    when:
+      verification.tests.status: passed
+      verification.static.new_errors:
+        eq: 0
+      change.blast_radius.score: LOW
+    then: allow
+    reason: "Tests passed, no new static errors, small blast radius."
+
+  # -----------------------------------------------------------------
+  # Fall-through: default to human review. Never silently allow.
+  # -----------------------------------------------------------------
+  - name: "default"
+    then: require_human
+    reason: "No prior rule matched; defaulting to human review."

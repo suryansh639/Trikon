@@ -1,0 +1,124 @@
+---
+title: "Quickstart"
+description: "From zero to your first verdict in five minutes."
+---
+
+Get Trikon running locally against one of your Python repos. Total time: about five minutes.
+
+## Prerequisites
+
+- Python 3.11 or newer
+- A Python project with a git history
+- A pytest test suite (any size is fine)
+- Docker (only if you want sandboxed test execution; you can skip in v0.1)
+
+## 1. Install
+
+<CodeGroup>
+```bash pip
+pip install trikon
+```
+```bash pipx (isolated)
+pipx install trikon
+```
+</CodeGroup>
+
+Verify the install:
+
+```bash
+trikon version
+```
+
+## 2. Initialize your repo
+
+From the root of your Python repository:
+
+```bash
+trikon init
+```
+
+This creates `.agentguard/policy.yaml` from the built-in default template, and prepares a coverage-map database at `.trikon/state.db`.
+
+<Warning>
+The first `trikon verify` run needs a coverage map. Build it once (it takes a few minutes for large suites):
+
+```bash
+trikon coverage build
+```
+
+Cached after that. See [Blast radius](/concepts/blast-radius) for how the map is used.
+</Warning>
+
+## 3. Verify a change
+
+Make a small edit to any Python file. Commit it. Then:
+
+```bash
+trikon verify --base HEAD~1 --head HEAD
+```
+
+You will see a verdict rendered as Markdown, with:
+
+- The **decision**: `allow`, `block`, or `require_human`
+- The **impacted modules** and **impacted tests**
+- Any **failing tests** with their specific error messages
+- The **matched policy rule** that produced the decision
+
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | `allow` — safe to merge/deploy |
+| `1` | `block` — do not merge |
+| `2` | `require_human` — needs human review |
+
+Add `-o json` for machine-readable output.
+
+## 4. Wire Trikon into an AI agent
+
+Start the MCP server:
+
+```bash
+trikon mcp serve --port 4801
+```
+
+Any MCP-aware agent (Claude Code, Cursor, Codex, a custom agent) can now invoke `verify_change` and receive a machine-readable verdict. Full setup: [MCP integration](/integrations/mcp).
+
+## 5. Optional — wire Trikon into CI
+
+Add to `.github/workflows/verify.yml`:
+
+```yaml
+name: Trikon verify
+on: pull_request
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install trikon
+      - run: trikon verify --base ${{ github.event.pull_request.base.sha }} --head ${{ github.event.pull_request.head.sha }}
+```
+
+## Where Trikon writes to disk
+
+| Path | Purpose |
+| --- | --- |
+| `.trikon/policy.yaml` | Policy DSL (commit this) |
+| `.trikon/checks/*.py` | Custom check plugins (commit these) |
+| `.trikon/state.db` | Symbol index + dep graph + coverage map (gitignore) |
+| `.trikon/audit.log` | Local hash-chained audit log (gitignore) |
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Understand the verdict" icon="scale-balanced" href="/concepts/verdicts">
+    What each field of the Verdict means and how to consume it programmatically.
+  </Card>
+  <Card title="Write your policy" icon="file-lines" href="/concepts/policy-dsl">
+    Full policy DSL reference and example patterns.
+  </Card>
+</CardGroup>

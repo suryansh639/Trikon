@@ -1,0 +1,101 @@
+---
+title: "Team Tier Deployment"
+description: "Hosted GitHub App with managed verification runners."
+---
+
+Team tier is the fastest path from "I want Trikon" to "PRs are getting verified." Everything runs in Trikon's AWS infrastructure. No infrastructure to operate on your side.
+
+## What you get
+
+- Hosted GitHub App
+- Managed verification runners on our ECS Fargate
+- 90-day audit log retention
+- Web dashboard at `dashboard.trikon.dev`
+- Slack, Discord, Microsoft Teams alerts
+- Up to 5 integrated agents per org
+- Email support with 48-hour SLA
+
+$299 / repo / month. Volume discounts at 10 and 25 repos. See [Pricing](/pricing).
+
+## Onboarding (15 minutes)
+
+<Steps>
+  <Step title="Sign up">
+    Visit `https://trikon.dev` and sign up with GitHub OAuth or email.
+  </Step>
+  <Step title="Add payment">
+    Stripe Checkout. Card or invoice (annual).
+  </Step>
+  <Step title="Install the GitHub App">
+    We link you to the [GitHub App](/integrations/github-app) install page.
+  </Step>
+  <Step title="Select repos">
+    Grant access to specific repos (recommended) or your entire org.
+  </Step>
+  <Step title="Merge the policy PR">
+    Trikon opens a PR in each selected repo adding `.trikon/policy.yaml` from your chosen template. Review and merge.
+  </Step>
+  <Step title="Wait for the coverage map build">
+    We run a one-time full pytest with coverage in the background. Typically 5-20 minutes depending on suite size. You get a Slack/email notification when it's done.
+  </Step>
+  <Step title="Open a test PR">
+    Any PR opened after activation triggers a Trikon verdict within 90 seconds.
+  </Step>
+</Steps>
+
+## What happens on every PR
+
+```
+GitHub webhook → Trikon API (us-east-1)
+                    ↓
+                 SQS + ECS Fargate worker
+                    ↓
+                 shallow-clone repo (ephemeral)
+                    ↓
+                 run impacted tests + static checks
+                    ↓
+                 verdict → PR comment + check-run + dashboard + audit log
+                    ↓
+                 sandbox destroyed
+```
+
+Full topology: [Operations doc](https://github.com/suryansh639/Trikon/blob/main/OPERATIONS.md#mode-b--hosted-saas-team-tier).
+
+## Data handling
+
+- Your source is shallow-cloned into an ephemeral sandbox. Not persisted.
+- Test output is scanned for secrets and redacted before persisting.
+- All customer data encrypted at rest with per-org KMS keys.
+- 90-day retention, then automatic deletion.
+
+Full detail: [Trust & Security](/security).
+
+## Rate limits
+
+Team tier enforces:
+
+- 50 verdicts per repo per hour
+- 1,500 verdicts per repo per day
+- 5-minute execution cap per verdict
+
+If you hit these, you get an in-dashboard warning. Repeat overshoot is an upsell signal our sales team will reach out on. Or upgrade to [Enterprise](/deployment/enterprise) for unlimited execution.
+
+## Managing your subscription
+
+Everything is in your dashboard under **Billing**. Managed by Stripe:
+
+- Current plan
+- Next invoice date and amount
+- Payment method
+- Invoice history
+
+Cancel any time from the dashboard. Existing verdicts stay in your dashboard for the retention window. Trikon uninstalls its GitHub App access.
+
+## Support
+
+`support@trikon.dev` — 48-hour SLA. Enterprise customers get a dedicated Slack channel.
+
+## Related
+
+- [Pricing](/pricing)
+- [Enterprise deployment](/deployment/enterprise) if source cannot leave your VPC
