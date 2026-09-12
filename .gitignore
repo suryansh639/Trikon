@@ -33,3 +33,10 @@ env/
 # helper scripts (never commit)
 _*.sh
 _*.py
+
+# Subagent artifacts (semantic reviews, task-execution transcripts)
+semantic-review/
+
+# Test tooling caches
+.hypothesis/
+.benchmarks/
