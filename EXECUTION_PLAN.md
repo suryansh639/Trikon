@@ -80,18 +80,18 @@ The engine that turns a git diff into an impact set. This is the hardest technic
 
 ### Deliverables
 
-- [ ] `trikon/change_intel/diff_parser.py`: real implementation using `gitpython` + `unidiff`.
-- [ ] `trikon/change_intel/ast_indexer.py`: full `libcst`-based symbol extraction with byte-offset ranges.
-- [ ] `trikon/change_intel/symbol_resolver.py`: `jedi`-backed cross-file reference finder.
-- [ ] `trikon/change_intel/dep_graph.py`: SQLite-persisted directed graph with incremental updates (SHA-256 keyed).
-- [ ] `trikon/change_intel/blast_radius.py`: computes `ImpactSet` including numeric score + bucket.
-- [ ] `examples/sample_repo/`: materialize a small Python fixture with:
+- [x] `trikon/change_intel/diff_parser.py`: real implementation using `gitpython` + `unidiff`.
+- [x] `trikon/change_intel/ast_indexer.py`: full `libcst`-based symbol extraction with byte-offset ranges.
+- [x] `trikon/change_intel/symbol_resolver.py`: `jedi`-backed cross-file reference finder.
+- [x] `trikon/change_intel/dep_graph.py`: SQLite-persisted directed graph with incremental updates (SHA-256 keyed).
+- [x] `trikon/change_intel/blast_radius.py`: computes `ImpactSet` including numeric score + bucket.
+- [x] `examples/sample_repo/`: materialize a small Python fixture with:
   - Working baseline (all tests pass)
   - A seeded "bad diff" that breaks one test
   - A seeded "clean refactor" that passes
   - Its own `.trikon/policy.yaml`
-- [ ] Unit tests: `tests/unit/test_diff_parser.py`, `test_ast_indexer.py`, `test_dep_graph.py`, `test_blast_radius.py`.
-- [ ] Benchmark script: index a 100K-LOC Python repo (Django or Flask) in <30 seconds cold, <2 seconds warm.
+- [x] Unit tests: `tests/unit/test_diff_parser.py`, `test_ast_indexer.py`, `test_dep_graph.py`, `test_blast_radius.py`.
+- [x] Benchmark script: index a 100K-LOC Python repo (Django or Flask) in <30 seconds cold, <2 seconds warm.
 
 ### Definition of Done
 

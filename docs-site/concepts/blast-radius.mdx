@@ -5,6 +5,10 @@ description: "How Trikon decides which tests actually matter for a given change.
 
 Blast radius is Trikon's answer to *"what does this change affect?"*. It powers targeted test execution, focus recommendations to reviewers, and the numeric score that policies read.
 
+<Note>
+  **Phase 1 status.** Change intelligence is the first shipping subsystem. The pipeline below (`parse_diff` → `ImpactSet`) is live behind the `trikon debug impact` CLI. The verification runner, policy engine, and full `trikon verify` command land in Phase 2 — until then, `sdk.verify()` always returns `require_human` because there is no verification evidence to grade yet. See the [engineer walkthrough](https://github.com/suryansh639/Trikon/blob/main/docs/change_intel.md) on GitHub for the module-level tour.
+</Note>
+
 ## The pipeline
 
 ```
@@ -63,6 +67,34 @@ The score buckets to **LOW / MEDIUM / HIGH**:
 - `< 15.0` → MEDIUM
 - `≥ 15.0` → HIGH
 
+## Command-line usage
+
+Phase 1 exposes the pipeline through `trikon debug impact`. Point it at any git repo with a base and head ref:
+
+```bash
+trikon debug impact --repo /path/to/repo --base main --head HEAD
+```
+
+The command runs `parse_diff` → `index_files` → `compute_impact` and prints the resulting `ImpactSet` as JSON on stdout. Exit code `0` on success; `1` on any uncaught error (the exception name is written to stderr).
+
+<CodeGroup>
+```bash Local sample repo
+trikon debug impact \
+  --repo examples/sample_repo \
+  --base HEAD~1 \
+  --head HEAD
+```
+```bash Custom cache location
+trikon debug impact \
+  --repo /path/to/repo \
+  --base main \
+  --head feature-branch \
+  --cache-db /tmp/trikon-state.db
+```
+</CodeGroup>
+
+The output is the exact `ImpactSet` documented under [Verdicts](/concepts/verdicts) — same shape that will be embedded in `evidence.change` once the full `trikon verify` command ships in Phase 2. See the CLI reference: [trikon verify](/cli/verify).
+
 ## Test selection
 
 Given the impacted symbols, Trikon selects tests in this priority order:
@@ -103,5 +135,7 @@ Runs the full suite with `coverage.py` instrumentation and stores the map. Typic
 
 ## Related
 
+- [trikon verify](/cli/verify) — the Phase-2 CLI that will wrap the full pipeline (verify + policy + verdict)
 - [Verdicts](/concepts/verdicts) — how the ImpactSet feeds into the final decision
 - [Policy DSL](/concepts/policy-dsl) — how to reference the score in your rules
+- [Change intelligence — engineer's walkthrough](https://github.com/suryansh639/Trikon/blob/main/docs/change_intel.md) — module-by-module tour on GitHub

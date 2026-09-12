@@ -5,6 +5,10 @@ description: "From zero to your first verdict in five minutes."
 
 Get Trikon running locally against one of your Python repos. Total time: about five minutes.
 
+<Note>
+  **Phase 1 status.** Today, Trikon ships the change-intelligence pipeline behind `trikon debug impact` — it takes a diff and returns a structured [ImpactSet](/concepts/blast-radius). The full `trikon verify` flow described below (targeted test execution, static checks, policy engine, MCP server, `trikon init`, `trikon coverage build`) lands in Phases 2 and 3. Until then, `sdk.verify()` always returns `require_human`. For a hands-on tour of the Phase-1 command, see [Blast radius → Command-line usage](/concepts/blast-radius#command-line-usage).
+</Note>
+
 ## Prerequisites
 
 - Python 3.11 or newer

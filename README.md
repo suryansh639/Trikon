@@ -40,7 +40,22 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full design.
 
 ## Status
 
-Pre-alpha scaffolding. No working implementation yet — the folder currently contains the architecture doc, the intended package layout, and stubs that make the design concrete.
+Pre-alpha. Phase 1 (change intelligence) is implemented end-to-end; the verification runner (Phase 2), policy engine (Phase 3), and hosted control plane come later. See [`EXECUTION_PLAN.md`](./EXECUTION_PLAN.md) for the phase-by-phase map.
+
+## Phase 1: what ships today
+
+- **Change-intelligence pipeline** — `parse_diff` → AST indexer → symbol resolver → dep graph → `compute_impact`, producing a structured `ImpactSet` (impacted files, symbols, modules, public APIs, tests, blast-radius score). Frozen contract in [`.kiro/specs/change-intelligence/design.md`](./.kiro/specs/change-intelligence/design.md).
+- **CLI: `trikon debug impact`** — runs the whole pipeline against a git repo and prints the `ImpactSet` as JSON. The first end-to-end runnable checkpoint.
+- **Never-fail-open guarantee** — every exception raised inside `trikon/change_intel/**` is a subclass of `ChangeIntelError`. The SDK boundary catches the base class and returns a `Verdict` with `decision="require_human"` and `blast_radius_score="HIGH"`. `allow` is never emitted on an error path. See [`docs/change_intel.md`](./docs/change_intel.md#never-fail-open).
+
+Try it locally:
+
+```bash
+pip install -e ".[dev]"
+trikon debug impact --repo examples/sample_repo --base HEAD --head HEAD
+```
+
+Phase 2 (targeted test execution + sandbox) and Phase 3 (policy engine + `trikon verify`) are next. Until they land, `sdk.verify()` returns `require_human` because there is no verification evidence to grade yet.
 
 ## Documentation
 
@@ -52,6 +67,7 @@ Pre-alpha scaffolding. No working implementation yet — the folder currently co
 | [`OPERATIONS.md`](./OPERATIONS.md) | Production topology, SLA, runbook. |
 | [`docs/quickstart.md`](./docs/quickstart.md) | Get running locally. |
 | [`docs/worked_example.md`](./docs/worked_example.md) | End-to-end scenario with numbers. |
+| [`docs/change_intel.md`](./docs/change_intel.md) | Engineer's walkthrough of the Phase 1 change-intelligence pipeline. |
 | [`docs-site/`](./docs-site) | Mintlify docs site (end-user facing). |
 
 ## Immediate next steps
