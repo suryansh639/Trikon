@@ -46,7 +46,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pytest tests/integration/ -v
+      - run: pytest tests/integration/ -v -o "addopts=-ra --strict-markers"
 
   perf:
     runs-on: ubuntu-latest
@@ -59,7 +59,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - name: Run always-on benchmarks
-        run: pytest tests/benchmarks/ --benchmark-only --benchmark-max-time=60 --no-cov -m "slow and not django"
+        run: pytest tests/benchmarks/ --benchmark-only --benchmark-max-time=60 --no-cov -o "addopts=-ra --strict-markers" -m "slow and not django"
 
   # Nightly perf gate for the Verification Runner (Phase 2, Task 14.3).
   # Distinct from the Phase-1 `perf` job above: that one runs on PRs against
@@ -81,7 +81,7 @@ jobs:
         run: ./scripts/build_sandbox_image.sh
       - run: pip install -e ".[dev]"
       - name: Run nightly verify perf benchmarks
-        run: pytest tests/benchmarks/ -m perf --benchmark-only --benchmark-max-time=60
+        run: pytest tests/benchmarks/ -m perf --benchmark-only --benchmark-max-time=60 -o "addopts=-ra --strict-markers"
 
   # Nightly integration tests for `trikon/verify/**` (Task 14.3).
   # Requires a live Docker daemon and the pinned sandbox image; runs the
@@ -102,4 +102,4 @@ jobs:
         run: ./scripts/build_sandbox_image.sh
       - run: pip install -e ".[dev]"
       - name: Run verify integration tests
-        run: pytest tests/integration/verify/ -m integration
+        run: pytest tests/integration/verify/ -m integration -o "addopts=-ra --strict-markers"
