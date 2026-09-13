@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Trikon Verification Runner sandbox image (suryansh639/trikon:0.3.2).
+# Trikon Verification Runner sandbox image (suryansh639/trikon:0.3.3).
 #
 # This Dockerfile is the image contract for `trikon/verify/sandbox.py`.
 # Every tool version below is pinned; bumping any of them is a deliberate
@@ -11,7 +11,7 @@
 # instructions, and cache-invalidation semantics.
 #
 # Build:
-#   docker build -t suryansh639/trikon:0.3.2 -f Dockerfile.sandbox .
+#   docker build -t suryansh639/trikon:0.3.3 -f Dockerfile.sandbox .
 # (or run `scripts/build_sandbox_image.sh`)
 
 # Pinned to the multi-arch manifest digest of `python:3.11-slim` published
@@ -28,13 +28,27 @@ RUN groupadd --gid 10001 trikon \
 
 # Pinned tool versions. Bumping any of these invalidates static_baseline
 # (Requirement 3.3). Every pin is exact -- no `>=`, no ranges.
+#
+# The build-backend pins below make PEP 517 build isolation resolvable
+# offline: `pip install --no-build-isolation --no-index --no-deps -e .[dev]`
+# inside the sandbox uses these backends from the ambient site-packages
+# without ever needing to reach PyPI (which would fail anyway because
+# the container runs with `network_mode="none"`).
 RUN pip install --no-cache-dir \
         pip==24.3.1 \
         pytest==8.3.3 \
         pytest-json-report==1.5.0 \
         coverage==7.6.7 \
         ruff==0.7.4 \
-        mypy==1.13.0
+        mypy==1.13.0 \
+        setuptools==75.6.0 \
+        wheel==0.45.1 \
+        flit_core==3.11.0 \
+        hatchling==1.27.0 \
+        hatch-vcs==0.4.0 \
+        poetry-core==1.9.1 \
+        setuptools-scm==8.1.0 \
+        pdm-backend==2.4.3
 
 # Baseline site-packages layer stays in the read-only image.
 # Repo-supplied dependencies land in a tmpfs-backed venv at runtime.

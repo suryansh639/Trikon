@@ -153,17 +153,55 @@ class StaticTool:
 # ``static_baseline`` cache key (design.md §4.1). Bumping a pinned tool
 # version in ``pyproject.toml`` (or in the sandbox image) is therefore what
 # invalidates every cached row for that tool, per Requirement 3.3.
+#
+# Cache-dir redirection (Bug F fix)
+# ---------------------------------
+# Both ruff and mypy default to writing their cache dirs (``.ruff_cache``
+# and ``.mypy_cache``) next to the source tree they are analyzing. Inside
+# :class:`~trikon.verify.sandbox.LocalDockerSandbox` the repo bind-mount
+# at ``/workspace/repo`` is mounted **read-only**, so those default paths
+# fail with ``Read-only file system`` on the very first tool call — ruff
+# exits with code 2 and never emits a JSON array, mypy prints
+# ``Cannot write ... .mypy_cache/...`` and produces no diagnostics.
+# Both tools land error text on the sandbox's merged stdout stream and
+# the Bug-E-hardened :func:`~trikon.verify.static_checks._parse_ruff_json`
+# treats it as "no findings" — a silent pass on static checks, which is
+# worse than the original blocker.
+#
+# The fix is to redirect both cache dirs to the writable tmpfs mounted at
+# ``/workspace/tmp`` (see ``sandbox.py::_TMPFS_TMP`` — 512 MiB, uid/gid
+# 10001 to match the non-root sandbox user). Pinning the flag inside
+# ``argv_template`` makes the choice self-documenting in the argv (every
+# ``ps``, every log line, every ``docker exec`` trace shows the cache
+# location) and works uniformly for both the sandbox path and the
+# ``--no-sandbox`` :class:`~trikon.verify.sandbox.LocalSubprocessSandbox`
+# path. The host-side baseline runner in
+# :func:`~trikon.verify.static_checks._run_baseline_tool_on_host` strips
+# the flag before ``subprocess.run`` because ``/workspace/tmp`` does not
+# exist on the host filesystem (and on Windows is not even a valid path).
 DEFAULT_STATIC_TOOLS: tuple[StaticTool, ...] = (
     StaticTool(
         name="ruff",
-        argv_template=("ruff", "check", "--output-format=json", "{files}"),
+        argv_template=(
+            "ruff",
+            "check",
+            "--output-format=json",
+            "--cache-dir=/workspace/tmp/.ruff_cache",
+            "{files}",
+        ),
         version_command=("ruff", "--version"),
         parse_json=True,
         accepted_suffixes=frozenset({".py", ".pyi"}),
     ),
     StaticTool(
         name="mypy",
-        argv_template=("mypy", "--no-color-output", "--show-column-numbers", "{files}"),
+        argv_template=(
+            "mypy",
+            "--no-color-output",
+            "--show-column-numbers",
+            "--cache-dir=/workspace/tmp/.mypy_cache",
+            "{files}",
+        ),
         version_command=("mypy", "--version"),
         parse_json=False,
         accepted_suffixes=frozenset({".py", ".pyi"}),

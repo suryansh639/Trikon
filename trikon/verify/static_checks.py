@@ -765,6 +765,16 @@ def _run_baseline_tool_on_host(
         return []
 
     argv = _expand_argv(tool.argv_template, existing)
+    # Strip sandbox-only ``--cache-dir=`` flags before host-side invocation
+    # (Bug F). The sandbox pins them to ``/workspace/tmp/.<tool>_cache``
+    # because the repo bind-mount is read-only inside the container; that
+    # path does not exist on the host and on Windows is not even a valid
+    # path. Letting the host tool use its default cache location (adjacent
+    # to the worktree, or the user's platform cache dir) is correct — the
+    # baseline is short-lived and the worktree is torn down immediately
+    # after the tool exits. See ``DEFAULT_STATIC_TOOLS`` in
+    # :mod:`trikon.verify.models` for the sandbox-side pin.
+    argv = tuple(t for t in argv if not t.startswith("--cache-dir="))
     # PATH augmentation for venv-installed tools. Same rationale as
     # LocalSubprocessSandbox.exec: when the user launches trikon from
     # `.venv/Scripts/python.exe -m trikon.cli verify --no-sandbox`, the
@@ -921,21 +931,75 @@ def _parse_ruff_json(stdout: str) -> list[dict[str, str | int]]:
     Ruff has no notion of "warning" severity — every ruff diagnostic is an
     "error" in ruff's grading model, so ``severity`` is a fixed literal.
 
+    Tolerance policy (Bug-E hardening)
+    ----------------------------------
+
+    :class:`LocalDockerSandbox` merges the container's stderr into the
+    ``stdout`` field of :class:`SandboxExecResult` (docker-py's
+    ``exec_start(stream=False)`` returns a single merged byte stream and
+    :func:`_decode_exec_output` collapses it into one string). A ruff
+    invocation that fails before it can emit a JSON array — for example
+    because ``/workspace/repo`` is bind-mounted read-only and ruff cannot
+    initialize ``.ruff_cache`` there — lands its error message on this
+    parser's input stream. The pre-Bug-E parser called :func:`json.loads`
+    unconditionally on that text and raised ``StaticCheckError('ruff
+    JSON parse failure: Expecting value: line 1 column 1 (char 0)')``,
+    sinking the whole verdict and violating the never-fail-open contract
+    from Requirement 6.
+
+    The revised policy has four branches:
+
+    1. Empty / whitespace-only stdout → return ``[]`` (ruff found nothing;
+       matches the pre-existing behavior).
+    2. Stdout that does not begin with the JSON array marker ``[`` after
+       stripping leading whitespace and any UTF-8 BOM → log a WARNING with
+       the first 500 characters of the observed stdout and return ``[]``.
+       This is the Bug-E branch: ruff error preamble, deprecation notices,
+       config warnings, and any other non-JSON prelude flow through here
+       without sinking the verdict.
+    3. Stdout that begins with ``[`` but fails to parse as JSON → raise
+       :class:`StaticCheckError`. This is a genuine malformed-output bug
+       worth surfacing, not a fail-open scenario.
+    4. A JSON payload whose top-level type or entry shape violates the
+       ruff schema → raise :class:`StaticCheckError` (Requirement 6.1 /
+       design.md §9.1, unchanged from the pre-Bug-E behavior).
+
     Args:
         stdout: The raw stdout captured from ``ruff check
-            --output-format=json ...``. May be empty (no findings), a JSON
-            array (findings present), or malformed (parse failure).
+            --output-format=json ...``, possibly with an error preamble
+            merged in from the sandbox's combined stdout+stderr stream.
 
     Returns:
         A list of finding dicts in emission order. Empty list when ruff
-        found no diagnostics.
+        found no diagnostics or when the parser tolerated non-JSON input
+        per branch (1) or (2) above.
 
     Raises:
-        StaticCheckError: When the payload is non-empty and not a JSON
-            array of objects (Requirement 6.1 / design.md §9.1).
+        StaticCheckError: When the payload begins with ``[`` but is
+            genuinely malformed JSON, or when the top-level shape / entry
+            shape violates ruff's schema (Requirement 6.1 / design.md §9.1).
     """
     stripped = stdout.strip()
+    # Strip any UTF-8 BOM the tool may have prepended, then re-strip in
+    # case whitespace sat between the BOM and the JSON payload. The BOM
+    # branch is defensive: ruff does not emit one today, but a future
+    # release, a locale-mangled wrapper, or a corrupted stream could.
+    if stripped.startswith("\ufeff"):
+        stripped = stripped[1:].strip()
     if not stripped:
+        return []
+
+    if not stripped.startswith("["):
+        # Non-JSON preamble (typically ruff's own error text merged in
+        # from stderr by the sandbox). Log at WARNING so operators can
+        # see the tool failure without the verdict itself crashing;
+        # cap the payload at 500 chars so a runaway error stream does
+        # not flood the log.
+        _logger.warning(
+            "ruff parser: stdout does not begin with a JSON array; "
+            "treating as no findings. First 500 chars: %r",
+            stripped[:500],
+        )
         return []
 
     try:

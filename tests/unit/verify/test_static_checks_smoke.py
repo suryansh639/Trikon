@@ -14,6 +14,7 @@ lands the full suite (baseline cache miss/hit, tool-version invalidation,
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -75,16 +76,51 @@ def test_parse_ruff_json_empty_stdout_returns_empty_list() -> None:
     assert _parse_ruff_json("   \n\n  ") == []
 
 
-def test_parse_ruff_json_malformed_raises_static_check_error() -> None:
-    """Non-JSON stdout raises StaticCheckError (design.md §9.1)."""
+def test_parse_ruff_json_malformed_array_raises_static_check_error() -> None:
+    """Malformed JSON that starts with ``[`` still raises (genuine parse bug)."""
     with pytest.raises(StaticCheckError, match="ruff JSON parse failure"):
-        _parse_ruff_json("this is not json{")
+        _parse_ruff_json("[{invalid json without closing")
 
 
-def test_parse_ruff_json_non_array_top_level_raises() -> None:
-    """A JSON object at the top level (not an array) is a parse failure."""
-    with pytest.raises(StaticCheckError, match="expected top-level array"):
-        _parse_ruff_json('{"code": "F401"}')
+def test_parse_ruff_json_non_bracket_stdout_returns_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stdout that does not begin with ``[`` is tolerated as no findings (Bug E).
+
+    :class:`LocalDockerSandbox` merges stderr into stdout via docker-py's
+    combined-stream ``exec_start``. A failing ruff run (e.g. read-only
+    ``.ruff_cache`` path) lands its error text on ``stdout``; the parser
+    logs a WARNING and returns ``[]`` rather than raising and sinking the
+    whole verdict.
+    """
+    stdout = (
+        "error: Failed to initialize cache at /workspace/repo/.ruff_cache: "
+        "Read-only file system (os error 30)\n"
+        "ruff failed\n"
+        '  Cause: No such file or directory (os error 2) at path "..."\n'
+    )
+    with caplog.at_level(logging.WARNING, logger="trikon.verify.static_checks"):
+        assert _parse_ruff_json(stdout) == []
+    assert any(
+        "does not begin with a JSON array" in record.getMessage() for record in caplog.records
+    )
+
+
+def test_parse_ruff_json_top_level_object_returns_empty() -> None:
+    """A JSON object at top level does not start with ``[`` and is tolerated.
+
+    Ruff never emits a top-level object under ``--output-format=json``, so
+    the pre-Bug-E "expected top-level array" raise carried no real
+    diagnostic value in production. The Bug-E tolerance policy folds this
+    case into branch (2) of :func:`_parse_ruff_json` — warning-and-empty.
+    """
+    assert _parse_ruff_json('{"code": "F401"}') == []
+
+
+def test_parse_ruff_json_tolerates_utf8_bom() -> None:
+    """A leading UTF-8 BOM is stripped before the ``[`` heuristic fires."""
+    payload = "\ufeff[]"
+    assert _parse_ruff_json(payload) == []
 
 
 # ---------------------------------------------------------------------------

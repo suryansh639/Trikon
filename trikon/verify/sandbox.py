@@ -3,7 +3,7 @@
 Phase 2 ships a single sandbox backend: :class:`LocalDockerSandbox`, driven
 by the local Docker daemon through the ``docker-py`` client. The class is
 used as a context manager by :func:`trikon.verify.runner.run_verification`
-to spin up a pinned container from ``suryansh639/trikon:0.3.2``, run pytest,
+to spin up a pinned container from ``suryansh639/trikon:0.3.3``, run pytest,
 ruff, mypy, and repo-defined plugins inside it, and tear the container down
 cleanly on the way out.
 
@@ -23,6 +23,37 @@ the network-allowlist branch is accepted at the API surface but falls back
 to ``network_mode="none"`` in Phase 2 (Task 5.3, Option D) — full iptables
 egress control lands in Phase 3. See the :class:`LocalDockerSandbox`
 docstring for the Phase-2 vs Phase-3 tension.
+
+Writable-tmpfs contract: the container spec mounts three tmpfs volumes at
+``/workspace/tmp`` (512 MiB), ``/workspace/pip-cache`` (256 MiB), and
+``/home/trikon`` (256 MiB), all owned ``uid=10001, gid=10001`` to match the
+non-root ``trikon`` user; these are the ONLY writable paths inside the
+container because the root filesystem is mounted read-only.
+:func:`_verify_mount_and_install_deps` MUST therefore set both
+``TMPDIR=/workspace/tmp`` and ``PIP_CACHE_DIR=/workspace/pip-cache`` in the
+exec env for every ``pip`` invocation, otherwise ``tempfile``'s
+default-search fallback chain (``/tmp``, ``/var/tmp``, ``/usr/tmp``,
+``<cwd>``) collapses against the read-only rootfs and pip dies with
+``FileNotFoundError: No usable temporary directory found`` before
+Dep_Install_Step can run. The ``/home/trikon`` tmpfs exists so pip's
+``--user`` fallback (triggered when the ambient site-packages under
+``/usr/lib/python*`` is not writable by uid 10001) can materialize
+``~/.local/lib/pythonX/site-packages`` on the read-only rootfs.
+
+Build-backend contract: the Sandbox_Image carries the Build_Backend_Pins
+set (``flit_core``, ``hatchling``, ``hatch-vcs``, ``poetry-core``,
+``setuptools``, ``setuptools-scm``, ``wheel``, ``pdm-backend``) pre-installed
+into the ambient site-packages, and Dep_Install_Step passes
+``--no-build-isolation --no-index --no-deps`` so PEP 517 build isolation
+resolves against those pins instead of ``pip download``ing the backend from
+PyPI (which would fail against ``network_mode="none"`` anyway).
+Exotic_Build_Backend requirements (``maturin``, ``scikit-build-core``,
+``meson-python``, and private organization backends) remain a known
+limitation and fail closed with ``decision="require_human"``; the workaround
+is a downstream sandbox image ``FROM suryansh639/trikon:0.3.3`` that pins
+the extra backend, passed as the ``image=`` kwarg to
+:class:`LocalDockerSandbox` / :func:`create_sandbox` /
+:func:`run_verification`.
 
 See ``design.md §3.3`` for the public API contract; ``design.md §5.2`` for
 the container spec; ``design.md §5.4`` for the startup sequence; and
@@ -63,9 +94,21 @@ _SANDBOX_UID_GID = "10001:10001"
 _REPO_MOUNT_TARGET = "/workspace/repo"
 _TMPFS_TMP = "/workspace/tmp"
 _TMPFS_PIP_CACHE = "/workspace/pip-cache"
+# ``/home/trikon`` is masked with a 256 MiB tmpfs (uid/gid 10001) because
+# ``pip install -e .`` inside the container runs as the non-root sandbox
+# user and the image's ambient site-packages under ``/usr/lib/python*`` is
+# root-owned. When pip cannot write to site-packages it falls back to
+# ``--user`` mode, which targets ``~/.local/lib/pythonX/site-packages`` —
+# i.e., ``/home/trikon/.local``. The container's rootfs is ``read_only=True``
+# so that path is unwritable without a tmpfs. Masking the whole home dir is
+# safe: ``Dockerfile.sandbox`` only calls ``useradd --create-home`` for
+# uid/gid provisioning and does not stash any file under ``/home/trikon``
+# that the sandbox depends on at runtime.
+_TMPFS_HOME = "/home/trikon"
 _TMPFS_SPEC: dict[str, str] = {
     _TMPFS_TMP: "size=512m,uid=10001,gid=10001",
     _TMPFS_PIP_CACHE: "size=256m,uid=10001,gid=10001",
+    _TMPFS_HOME: "size=256m,uid=10001,gid=10001",
 }
 _CONTAINER_LABELS: dict[str, str] = {
     "trikon.role": "verify-sandbox",
@@ -147,7 +190,7 @@ class LocalDockerSandbox:
     def __init__(
         self,
         *,
-        image: str = "suryansh639/trikon:0.3.2",
+        image: str = "suryansh639/trikon:0.3.3",
         network_allowlist: tuple[str, ...] | None = None,
         mem_limit: str = "2g",
         cpu_quota: int = 200_000,
@@ -162,7 +205,7 @@ class LocalDockerSandbox:
 
         Args:
             image: Pinned sandbox image tag. Defaults to
-                ``suryansh639/trikon:0.3.2``, the tag built by
+                ``suryansh639/trikon:0.3.3``, the tag built by
                 ``scripts/build_sandbox_image.sh``.
             network_allowlist: Egress allowlist requested by policy. In
                 Phase 2 this argument is accepted for API stability with
@@ -567,7 +610,8 @@ class LocalDockerSandbox:
            mount, and we want that to surface here rather than as a
            mysterious pytest collection failure downstream.
         2. Install the repository's dev dependencies via ``pip install
-           --no-deps -e .[dev]`` into the tmpfs-backed pip cache.
+           --no-build-isolation --no-index --no-deps -e .[dev]`` into
+           the tmpfs-backed pip cache.
 
         Both steps use the same :meth:`exec` codepath that downstream
         callers use, so error handling and the container-lifecycle
@@ -583,10 +627,27 @@ class LocalDockerSandbox:
                 f"not a directory inside the container (exit={probe.exit_code})"
             )
 
+        # ``TMPDIR`` must point at the writable tmpfs (``/workspace/tmp``)
+        # because the container's rootfs is ``read_only=True`` and Python's
+        # ``tempfile._get_default_tempdir()`` fallback chain would otherwise
+        # collapse against ``/tmp``. Both env values reference the
+        # module-level tmpfs constants so the exec env cannot drift from
+        # ``_TMPFS_SPEC`` (design.md §3 / Property 1).
         result = self.exec(
-            ("pip", "install", "--no-deps", "-e", ".[dev]"),
+            (
+                "pip",
+                "install",
+                "--no-build-isolation",
+                "--no-index",
+                "--no-deps",
+                "-e",
+                ".[dev]",
+            ),
             workdir=_REPO_MOUNT_TARGET,
-            env=(("PIP_CACHE_DIR", _TMPFS_PIP_CACHE),),
+            env=(
+                ("TMPDIR", _TMPFS_TMP),
+                ("PIP_CACHE_DIR", _TMPFS_PIP_CACHE),
+            ),
             timeout_seconds=_DEP_INSTALL_TIMEOUT_SECONDS,
         )
         if result.exit_code != 0:
@@ -642,7 +703,7 @@ Sandbox = LocalDockerSandbox | LocalSubprocessSandbox
 def create_sandbox(
     *,
     no_sandbox: bool = False,
-    image: str = "suryansh639/trikon:0.3.2",
+    image: str = "suryansh639/trikon:0.3.3",
     network_allowlist: tuple[str, ...] | None = None,
     mem_limit: str = "2g",
     cpu_quota: int = 200_000,

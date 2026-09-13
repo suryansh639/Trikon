@@ -1,0 +1,142 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 In `trikon/verify/sandbox.py::_verify_mount_and_install_deps` (around line 590 of the shipped 0.3.2 source), replace the current `pip install --no-deps -e .[dev]` invocation with the offline-safe form. Change the argv tuple to `(\"pip\", \"install\", \"--no-build-isolation\", \"--no-index\", \"--no-deps\", \"-e\", \".[dev]\")`. Change the `env` tuple from `((\"PIP_CACHE_DIR\", _TMPFS_PIP_CACHE),)` to `((\"TMPDIR\", _TMPFS_TMP), (\"PIP_CACHE_DIR\", _TMPFS_PIP_CACHE))`. Both env values MUST reference the module-level constants `_TMPFS_TMP` and `_TMPFS_PIP_CACHE` — not string literals — so the exec env cannot drift from `_TMPFS_SPEC` (Requirement 1.3 / Property 1). Do NOT change `_DEP_INSTALL_TIMEOUT_SECONDS`, `workdir`, the surrounding mount-probe block, or the raise-site truncation `result.stdout[:2000]`. Verify locally with `uv run mypy --strict trikon/verify/sandbox.py`.": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305895689
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789306018121
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789306097404
+      }
+    ],
+    "2.1 In `Dockerfile.sandbox`, extend the existing pin block (currently the single `RUN pip install --no-cache-dir` on lines ~30-36) to add exact `==` pins for the Build_Backend_Pins set: `setuptools==75.6.0`, `wheel==0.45.1`, `flit_core==3.10.1`, `hatchling==1.27.0`, `hatch-vcs==0.4.0`, `poetry-core==1.9.1`, `setuptools-scm==8.1.0`, `pdm-backend==2.4.3`. Keep them in the same `RUN` layer as `ruff`/`mypy`/`pytest`/`coverage`/`pytest-json-report`/`pip` so the image-contract cache-invalidation clause treats them uniformly. Add a 3-4 line comment above the block noting that these pins are what makes offline `pip install --no-build-isolation --no-index --no-deps -e .[dev]` succeed inside a container running with `network_mode=\"none\"`. Update the two file-header comments (module comment line 3, `docker build` example line 14) that reference `suryansh639/trikon:0.3.2` to `suryansh639/trikon:0.3.3`.": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305895755
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305909409
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789306008278
+      }
+    ],
+    "2.2 Bump the pinned sandbox image tag from `suryansh639/trikon:0.3.2` to `suryansh639/trikon:0.3.3` at every default-kwarg raise site inside the wheel. Concretely: `trikon/verify/sandbox.py` line ~150 (`LocalDockerSandbox.__init__` default), line ~165 (docstring reference), line ~645 (`create_sandbox` factory default); `trikon/verify/runner.py` line ~167 (`run_verification`'s `sandbox_image` parameter default) and line ~209 (docstring reference); `trikon/verify/_plugin_shim.py` line ~37 (comment reference). Also bump `pyproject.toml`'s `project.version` from `\"0.3.2\"` to `\"0.3.3\"` on the same edit so the wheel metadata pin-couples to the image tag on the eventual `v0.3.3` tag push. Do NOT edit `.github/workflows/publish-sandbox.yml` — its tag trigger reads the version from `${GITHUB_REF#refs/tags/v}` and requires no code change.": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305895807
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789306103810
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789308431351
+      }
+    ],
+    "3.1 In `trikon/__init__.py`, replace the hand-edited `__version__ = \"0.3.0\"` line with an import-time lookup via `importlib.metadata.version(\"trikon\")`. Add `from importlib.metadata import PackageNotFoundError` and `from importlib.metadata import version as _pkg_version` at the top of the module (above the `trikon.*` imports to keep stdlib-before-firstparty ruff ordering clean). Wrap the assignment in `try/except PackageNotFoundError` with a fallback of `\"0.0.0+unknown\"` for source-checkout imports; annotate the assignment as `__version__: str = _pkg_version(\"trikon\")` inside the `try` block so `mypy --strict` accepts the branching type. Do NOT catch any other exception. Leave `__all__` unchanged in ordering and contents. Verify locally with `uv run mypy --strict trikon/__init__.py` and `uv run ruff check trikon/__init__.py`.": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305895865
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305911894
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789306011286
+      }
+    ],
+    "4.1 Extend the module docstring in `trikon/verify/sandbox.py` (currently the top-of-file docstring block, roughly lines 1-30) with two new short sections between the existing container-spec paragraph and the closing \"See design.md\" pointer. First, a \"Writable-tmpfs contract\" paragraph naming the two tmpfs mount points (`/workspace/tmp` = 512 MiB, `/workspace/pip-cache` = 256 MiB, both `uid=10001, gid=10001`), stating that these are the ONLY writable paths inside the container, and stating that `_verify_mount_and_install_deps` MUST set both `TMPDIR=/workspace/tmp` and `PIP_CACHE_DIR=/workspace/pip-cache` in the exec env so tempfile's default-search fallback does not hit the read-only rootfs. Second, a \"Build-backend contract\" paragraph naming the Build_Backend_Pins set carried by the sandbox image (`flit_core`, `hatchling`, `hatch-vcs`, `poetry-core`, `setuptools`, `setuptools-scm`, `wheel`, `pdm-backend`), stating that Dep_Install_Step passes `--no-build-isolation --no-index --no-deps` so PEP 517 build isolation never reaches PyPI, and calling out Exotic_Build_Backend as a known limitation (`maturin`, `scikit-build-core`, `meson-python`, and private backends) with the workaround being a downstream sandbox image `FROM suryansh639/trikon:0.3.3` that pins the extra backend, passed as the `image=` kwarg to `LocalDockerSandbox`/`create_sandbox`/`run_verification`. Do NOT reflow the existing paragraphs or change the \"See design.md\" pointer.": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305895973
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789308437489
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789308568146
+      }
+    ],
+    "6.1 Repeat the failing WSL smoke path from the bug ticket against the local build and confirm the sandbox reaches the tool-exec window. From the Trikon repo root inside WSL Ubuntu-22.04 with Docker 29.1.3 running: (a) build the new sandbox image locally with `docker build -t suryansh639/trikon:0.3.3 -f Dockerfile.sandbox .`; (b) build the wheel with `uv build` and install it as a tool with `uv tool install ./dist/trikon-0.3.3-py3-none-any.whl --python 3.12 --with mypy --with ruff --with pytest --with pytest-cov`; (c) run `trikon --version` and confirm the stdout is exactly `0.3.3`; (d) run `trikon verify --repo C:/…/click --base 87f7a31 --head 6aabf09 --output json`, parse the JSON output, and confirm `decision != \"require_human\"` (either `\"allow\"` or `\"block\"` is acceptable — both prove the sandbox reached pytest/ruff/mypy), `sandbox_ms > 0`, and the reason field does NOT contain `\"dep install failed inside verify sandbox\"`; (e) also run `uv run mypy --strict trikon/` and `uv run ruff check trikon/` from the source tree and confirm both are clean. Ensure all tests pass, ask the user if questions arise. Do NOT run any git operations against the Trikon parent repo — parent-repo commits and the `v0.3.3` tag push are the user's responsibility.": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789305896027
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789308574251
+      },
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789316096857
+      }
+    ],
+    "3. Fix Bug C — `__version__` via `importlib.metadata`": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789306011350
+      }
+    ],
+    "1. Fix Bug A + Bug B (call-site) — TMPDIR + offline pip flags in `_verify_mount_and_install_deps`": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789306097487
+      }
+    ],
+    "2. Fix Bug B (image-layer) — build-backend pins and image-tag bumps": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789308431448
+      }
+    ],
+    "4. Update `trikon/verify/sandbox.py` module docstring": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789308568253
+      }
+    ],
+    "6. Checkpoint — end-to-end WSL smoke re-run and static-analysis gate": [
+      {
+        "executionId": "9b0e848c-f542-4a41-8df0-6812906ec329",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789316097013
+      }
+    ]
+  }
+}
