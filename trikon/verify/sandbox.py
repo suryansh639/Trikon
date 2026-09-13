@@ -3,7 +3,7 @@
 Phase 2 ships a single sandbox backend: :class:`LocalDockerSandbox`, driven
 by the local Docker daemon through the ``docker-py`` client. The class is
 used as a context manager by :func:`trikon.verify.runner.run_verification`
-to spin up a pinned container from ``trikon/sandbox:0.1.0``, run pytest,
+to spin up a pinned container from ``suryansh639/trikon:0.3.2``, run pytest,
 ruff, mypy, and repo-defined plugins inside it, and tear the container down
 cleanly on the way out.
 
@@ -147,7 +147,7 @@ class LocalDockerSandbox:
     def __init__(
         self,
         *,
-        image: str = "trikon/sandbox:0.1.0",
+        image: str = "suryansh639/trikon:0.3.2",
         network_allowlist: tuple[str, ...] | None = None,
         mem_limit: str = "2g",
         cpu_quota: int = 200_000,
@@ -162,7 +162,7 @@ class LocalDockerSandbox:
 
         Args:
             image: Pinned sandbox image tag. Defaults to
-                ``trikon/sandbox:0.1.0``, the tag built by
+                ``suryansh639/trikon:0.3.2``, the tag built by
                 ``scripts/build_sandbox_image.sh``.
             network_allowlist: Egress allowlist requested by policy. In
                 Phase 2 this argument is accepted for API stability with
@@ -642,7 +642,7 @@ Sandbox = LocalDockerSandbox | LocalSubprocessSandbox
 def create_sandbox(
     *,
     no_sandbox: bool = False,
-    image: str = "trikon/sandbox:0.1.0",
+    image: str = "suryansh639/trikon:0.3.2",
     network_allowlist: tuple[str, ...] | None = None,
     mem_limit: str = "2g",
     cpu_quota: int = 200_000,
