@@ -29,7 +29,7 @@ the module clean under ``[tool.mypy] disallow_any_explicit = true``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
 # Test-selection output (see design.md §3.2)
@@ -112,6 +112,15 @@ class StaticTool:
     ``parse_json`` picks the finding parser: ``ruff`` emits JSON with
     ``--output-format=json`` and is parsed by ``_parse_ruff_json``; ``mypy``
     emits line-per-diagnostic text and is parsed by ``_parse_mypy_text``.
+    ``accepted_suffixes`` names the file suffixes (leading dot,
+    ``PurePosixPath.suffix`` semantics) that this tool can parse; the runner
+    filters ``impact.changed_files`` down to this set at both raise sites
+    before argv is built. The default of ``frozenset({".py", ".pyi"})`` is
+    correct for both ruff and mypy and matches the value both entries in
+    :data:`DEFAULT_STATIC_TOOLS` declare explicitly. ``default_factory`` is
+    used (not a shared literal) to satisfy the dataclass mutable-default
+    guardrail, which treats set-typed defaults as unsafe even when the type
+    is immutable :class:`frozenset`.
 
     The type is a value object, not a strategy — the actual parser
     dispatch lives in :mod:`trikon.verify.static_checks` and picks between
@@ -122,6 +131,9 @@ class StaticTool:
     argv_template: tuple[str, ...]
     version_command: tuple[str, ...]
     parse_json: bool
+    accepted_suffixes: frozenset[str] = field(
+        default_factory=lambda: frozenset({".py", ".pyi"}),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -147,12 +159,14 @@ DEFAULT_STATIC_TOOLS: tuple[StaticTool, ...] = (
         argv_template=("ruff", "check", "--output-format=json", "{files}"),
         version_command=("ruff", "--version"),
         parse_json=True,
+        accepted_suffixes=frozenset({".py", ".pyi"}),
     ),
     StaticTool(
         name="mypy",
         argv_template=("mypy", "--no-color-output", "--show-column-numbers", "{files}"),
         version_command=("mypy", "--version"),
         parse_json=False,
+        accepted_suffixes=frozenset({".py", ".pyi"}),
     ),
 )
 

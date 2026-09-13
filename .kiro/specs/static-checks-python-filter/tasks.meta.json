@@ -1,0 +1,118 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 In `trikon/verify/models.py`, add `accepted_suffixes: frozenset[str] = field(default_factory=lambda: frozenset({\".py\", \".pyi\"}))` to `StaticTool`, and update both entries of `DEFAULT_STATIC_TOOLS` (ruff and mypy) to declare `accepted_suffixes=frozenset({\".py\", \".pyi\"})` explicitly. Keep the dataclass `frozen=True, slots=True`. Import `field` from `dataclasses`. Verify with `uv run mypy --strict trikon/verify/models.py`.": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297670981
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297683623
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297769314
+      }
+    ],
+    "2.1 In `trikon/verify/static_checks.py`, add module-level helper `_filter_by_suffix(paths: Sequence[str], accepted_suffixes: frozenset[str]) -> tuple[str, ...]` using `pathlib.PurePosixPath` (add the import). Return `()` when `accepted_suffixes` is empty; otherwise return a tuple of paths whose `PurePosixPath(p).suffix in accepted_suffixes`, preserving input order. In `run_static_checks` Step 3 (currently around line 321), replace `argv = _expand_argv(tool.argv_template, impact.changed_files)` with a filter-first flow: compute `filtered = _filter_by_suffix(impact.changed_files, tool.accepted_suffixes)`; if `filtered` is empty, `continue` (skipping `sandbox.exec`, Step 4 diff, Step 5 counter updates) — `tools_run.append(tool.name)` at the top of the loop already ran, so tools_run is correctly populated; otherwise pass `filtered` to `_expand_argv` and proceed as before.": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297671068
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297774782
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297889542
+      }
+    ],
+    "3.1 In `trikon/verify/static_checks.py`, modify `_run_baseline_tool_on_host` (currently around line 715). Before the existing `existing = [f for f in changed_files if (worktree_dir / f).is_file()]` comprehension, insert `filtered = _filter_by_suffix(changed_files, tool.accepted_suffixes)` and `if not filtered: return []`. Change the existence comprehension to iterate over `filtered` instead of `changed_files`. The order-of-operations invariant (suffix filter before I/O) is what Requirement 4.2 pins down. Leave the PATH augmentation, `shutil.which`, `subprocess.run`, timeout wrapping, and parser dispatch below the argv construction unchanged.": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297671175
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297894677
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297981934
+      }
+    ],
+    "6.1 In `trikon/verify/static_checks.py`, extend the module docstring to document the suffix filter. Insert a \"Suffix filter\" section between the \"Signature\" block and the \"Algorithm (5 steps, design.md §7)\" block, describing: (a) the filter fires at both raise sites before argv is built, (b) `StaticTool.accepted_suffixes` is the discriminator and `_filter_by_suffix` is the helper, (c) ruff and mypy declare `frozenset({\".py\", \".pyi\"})`, (d) an empty filtered list skips the tool cleanly with `tools_run` recorded and zero findings appended. Also update the Step 3 bullet in the algorithm enumeration to name the filter step explicitly (\"filter `impact.changed_files` through `_filter_by_suffix` against `tool.accepted_suffixes`, skip cleanly if empty, otherwise expand the `{files}` sentinel …\").": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297671276
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297987539
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789298072101
+      }
+    ],
+    "7. Checkpoint — verify all tests pass and mypy --strict is clean": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297671374
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789298085076
+      },
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789298184760
+      }
+    ],
+    "1. Extend `StaticTool` descriptor with `accepted_suffixes`": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297769376
+      }
+    ],
+    "2. Add suffix filter helper and wire into the head-side raise site": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297889656
+      }
+    ],
+    "3. Wire filter into the baseline-side raise site": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789297981995
+      }
+    ],
+    "6. Update module docstring": [
+      {
+        "executionId": "0cc1a847-3b1e-406d-8cdc-b85e5de61531",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789298072162
+      }
+    ]
+  }
+}

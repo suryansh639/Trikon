@@ -14,6 +14,29 @@ The public shape is fixed by ``design.md §3.4``::
     run_static_checks(sandbox, conn, impact, *, repo_path, base_sha, head_sha,
                       tools=DEFAULT_STATIC_TOOLS) -> StaticReport
 
+Suffix filter
+-------------
+
+Before every tool invocation — head side and baseline side alike — the
+head-side changed-file list from ``impact.changed_files`` is filtered
+through :func:`_filter_by_suffix` against ``tool.accepted_suffixes``.
+Ruff and mypy both declare ``frozenset({".py", ".pyi"})``; any file
+whose suffix is outside that set (``uv.lock``, ``pyproject.toml``,
+``README.md``, images, generated artifacts) is dropped before argv is
+built. The filter fires at both raise sites — the head-side
+:func:`_expand_argv` call inside :func:`run_static_checks` Step 3 and
+the baseline-side :func:`_expand_argv` call inside
+:func:`_run_baseline_tool_on_host` — before argv construction. When
+the filtered list is empty for a given tool, that tool is skipped
+cleanly: ``sandbox.exec`` is not called, ``subprocess.run`` is not
+called, ``tools_run`` still records the tool ran, no finding is
+appended, and no counter (``new_errors``, ``new_warnings``,
+``preexisting_errors``) is incremented on account of that tool.
+
+This is the sole gate. Downstream code (:func:`_expand_argv`,
+``sandbox.exec``, ``subprocess.run``) trusts that every path it sees
+has a suffix the tool can parse.
+
 Algorithm (5 steps, design.md §7)
 ---------------------------------
 
@@ -31,11 +54,14 @@ Algorithm (5 steps, design.md §7)
    against the worktree, persist the parsed findings back to
    ``static_baseline``, and remove the worktree.
 
-3. **Head-side run** — for each tool, expand the ``{files}`` sentinel in
-   ``argv_template`` with ``impact.changed_files`` and invoke it inside the
-   sandbox. Ruff (``parse_json=True``) emits ``--output-format=json`` and
-   flows through :func:`_parse_ruff_json`; mypy (``parse_json=False``)
-   emits line-per-diagnostic text and flows through :func:`_parse_mypy_text`.
+3. **Head-side run** — for each tool, filter ``impact.changed_files``
+   through :func:`_filter_by_suffix` against ``tool.accepted_suffixes``,
+   skip cleanly if the filtered list is empty, otherwise expand the
+   ``{files}`` sentinel in ``argv_template`` with the filtered list and
+   invoke it inside the sandbox. Ruff (``parse_json=True``) emits
+   ``--output-format=json`` and flows through :func:`_parse_ruff_json`;
+   mypy (``parse_json=False``) emits line-per-diagnostic text and flows
+   through :func:`_parse_mypy_text`.
 
 4. **is_new diff** — each parsed head finding is keyed by
    ``(path, line, rule_id)`` and checked for membership in ``base_keys``.
@@ -125,7 +151,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from trikon.evidence.report import ImpactSet, StaticReport
@@ -318,7 +344,22 @@ def run_static_checks(
         # ---------------------------------------------------------------
         # Step 3: head-side tool run inside the sandbox.
         # ---------------------------------------------------------------
-        argv = _expand_argv(tool.argv_template, impact.changed_files)
+        # Filter first, expand second. ``impact.changed_files`` is
+        # language-agnostic (it can carry ``uv.lock``, ``pyproject.toml``,
+        # ``README.md``, images); passing non-parseable paths into ruff /
+        # mypy argv produces thousands of false-positive findings
+        # (design.md §2). :func:`_filter_by_suffix` is the sole gate:
+        # downstream code (``_expand_argv``, ``sandbox.exec``) trusts
+        # every path it sees has a suffix the tool can parse. When the
+        # filtered list is empty the tool is skipped cleanly —
+        # ``tools_run.append(tool.name)`` at the top of the per-tool
+        # loop already recorded the tool ran, so ``continue`` here
+        # satisfies Requirement 3.3 (skip records into ``tools_run``,
+        # appends no findings, increments no counters).
+        filtered = _filter_by_suffix(impact.changed_files, tool.accepted_suffixes)
+        if not filtered:
+            continue
+        argv = _expand_argv(tool.argv_template, filtered)
         # No timeout at Task 7.1/7.2 — Task 9.2 will thread the caller's
         # per-verdict deadline share into every stage. The sandbox itself
         # is bounded by the outer ``run_verification`` deadline.
@@ -709,7 +750,17 @@ def _run_baseline_tool_on_host(
             or on ruff JSON parse failure (mypy tolerates unparseable
             trailing lines at DEBUG log level).
     """
-    existing = [f for f in changed_files if (worktree_dir / f).is_file()]
+    # Suffix filter first, existence intersection second (Requirement 4.2):
+    # a path whose suffix is not in ``tool.accepted_suffixes`` is rejected
+    # here, before ``(worktree_dir / f).is_file()`` touches the base
+    # worktree filesystem. This is the sole baseline-side gate; downstream
+    # code (existence intersection, ``_expand_argv``, ``subprocess.run``)
+    # trusts every path it sees has a suffix the tool can parse. See
+    # design.md §6.
+    filtered = _filter_by_suffix(changed_files, tool.accepted_suffixes)
+    if not filtered:
+        return []
+    existing = [f for f in filtered if (worktree_dir / f).is_file()]
     if not existing:
         return []
 
@@ -757,6 +808,56 @@ def _run_baseline_tool_on_host(
     if tool.parse_json:
         return _parse_ruff_json(result.stdout)
     return _parse_mypy_text(result.stdout)
+
+
+# ---------------------------------------------------------------------------
+# Suffix filter
+# ---------------------------------------------------------------------------
+
+
+def _filter_by_suffix(
+    paths: Sequence[str],
+    accepted_suffixes: frozenset[str],
+) -> tuple[str, ...]:
+    """Return the subsequence of ``paths`` whose suffix is in ``accepted_suffixes``.
+
+    The filter is the sole gate between ``impact.changed_files`` and the two
+    tool-invocation raise sites (:func:`_expand_argv` at the head side,
+    :func:`_run_baseline_tool_on_host` at the baseline side). Anything
+    downstream of this helper trusts that every path it sees has a suffix
+    the tool can parse.
+
+    Suffix semantics match :attr:`pathlib.PurePosixPath.suffix` (not
+    :class:`pathlib.PurePath`) — ``impact.changed_files`` carries
+    git-relative paths that always use forward slashes regardless of host
+    OS, and :class:`~pathlib.PurePosixPath` is unambiguous under that
+    contract. ``_filter_by_suffix(["foo.py"], frozenset({".py"}))``
+    includes ``foo.py``; ``_filter_by_suffix(["Makefile"],
+    frozenset({".py"}))`` excludes ``Makefile`` because its suffix is the
+    empty string; ``_filter_by_suffix(["foo.tar.gz"], frozenset({".gz"}))``
+    includes ``foo.tar.gz`` because :attr:`PurePosixPath.suffix` is the
+    last suffix component.
+
+    Args:
+        paths: The file paths to filter. Input order is preserved in the
+            output (the output is a subsequence of ``paths``). The input
+            sequence is not mutated.
+        accepted_suffixes: The suffix set to keep. Each string SHOULD
+            include the leading dot (``".py"``, not ``"py"``); a bare
+            ``"py"`` will never match any real path suffix under
+            :attr:`PurePosixPath.suffix` semantics. An empty frozenset
+            short-circuits to the empty tuple regardless of ``paths``.
+
+    Returns:
+        A tuple whose elements are a subsequence of ``paths`` in original
+        order, containing exactly those paths whose
+        :attr:`PurePosixPath.suffix` is a member of ``accepted_suffixes``.
+        Pure function: same inputs produce the same output, with no I/O
+        and no mutation of its arguments.
+    """
+    if not accepted_suffixes:
+        return ()
+    return tuple(p for p in paths if PurePosixPath(p).suffix in accepted_suffixes)
 
 
 # ---------------------------------------------------------------------------
