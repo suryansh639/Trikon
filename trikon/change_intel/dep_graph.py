@@ -30,8 +30,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from trikon.audit_log.db import ensure_audit_tables
 from trikon.change_intel.errors import DepGraphError
 from trikon.change_intel.models import SymbolDef, SymbolKind
+from trikon.verify.db import ensure_verify_tables
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -516,9 +518,37 @@ class DepGraph:
         self._conn = conn
         try:
             self._init_schema(conn)
-        except DepGraphError:
-            # Schema init failed. Drop the connection so the next call retries
-            # cleanly (or raises again against a broken DB).
+            # Phase-2 (Verification Runner) sibling tables live in the same
+            # ``state.db``. ``ensure_verify_tables`` is additive-only
+            # (design.md §4.2) — CREATE TABLE IF NOT EXISTS + CREATE INDEX
+            # IF NOT EXISTS only, no ALTER/DROP on Phase-1 tables — and is
+            # idempotent by construction, so Phase-1-only callers see no
+            # behavior change. Running this after ``_init_schema`` means the
+            # state DB is Phase-2-ready from the first ``sqlite3.connect``.
+            # (Task 3.2 of the verification-runner spec.)
+            ensure_verify_tables(conn)
+            # Phase-3 (Policy Engine) sibling table. ``ensure_audit_tables``
+            # is additive-only (design.md §4.2) — CREATE TABLE IF NOT
+            # EXISTS + CREATE INDEX IF NOT EXISTS only, no ALTER/DROP on
+            # Phase-1 or Phase-2 tables — and idempotent by construction.
+            # Running it after Phase 2 means the state DB is Phase-3-ready
+            # from the first ``sqlite3.connect`` and Phase-1/2-only callers
+            # observe no behavior change. Any ``sqlite3.Error`` inside the
+            # DDL surfaces as ``AuditLogError`` (a ``TrikonError``
+            # subclass), so the ``except Exception`` below still closes
+            # the connection cleanly and the SDK boundary catches it
+            # uniformly. (Task 4.2 of the policy-engine spec; design.md
+            # §4.3, Requirements 4.1, 4.4, 7.1.)
+            ensure_audit_tables(conn)
+        except Exception:
+            # Schema init failed — Phase-1 migration (``DepGraphError``) or
+            # Phase-2 verify-table setup (currently ``RuntimeError`` from
+            # ``ensure_verify_tables``'s Task 3.1 placeholder; migrates to
+            # ``TestSelectionError`` when Task 1.2's wrapper lands). Either
+            # way, drop the connection so the next call retries cleanly
+            # against a fresh state. The original exception type is
+            # preserved so callers still see each subsystem's raise
+            # vocabulary.
             self.close()
             raise
         return conn

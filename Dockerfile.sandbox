@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+#
+# Trikon Verification Runner sandbox image (trikon/sandbox:0.1.0).
+#
+# This Dockerfile is the image contract for `trikon/verify/sandbox.py`.
+# Every tool version below is pinned; bumping any of them is a deliberate
+# edit that invalidates the `static_baseline` cache at the tool-version
+# boundary (per Requirement 3.3 in `.kiro/specs/verification-runner/requirements.md`).
+#
+# See `docs/verification.md` for the full image contract, rebuild
+# instructions, and cache-invalidation semantics.
+#
+# Build:
+#   docker build -t trikon/sandbox:0.1.0 -f Dockerfile.sandbox .
+# (or run `scripts/build_sandbox_image.sh`)
+
+# Pinned to the multi-arch manifest digest of `python:3.11-slim` published
+# 2026-09-02 on Docker Hub. The digest pin (not just the tag) is what makes
+# the image immutable across Docker Hub cache eviction; a stale tag can
+# silently point at a new upload without a digest reference.
+FROM python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
+
+# Non-root user for the entire container lifetime. uid/gid 10001 matches the
+# `user="10001:10001"` argument that `LocalDockerSandbox` passes to
+# `containers.create` (see design.md §5.2).
+RUN groupadd --gid 10001 trikon \
+ && useradd  --uid 10001 --gid 10001 --create-home --shell /bin/bash trikon
+
+# Pinned tool versions. Bumping any of these invalidates static_baseline
+# (Requirement 3.3). Every pin is exact -- no `>=`, no ranges.
+RUN pip install --no-cache-dir \
+        pip==24.3.1 \
+        pytest==8.3.3 \
+        pytest-json-report==1.5.0 \
+        coverage==7.6.7 \
+        ruff==0.7.4 \
+        mypy==1.13.0
+
+# Baseline site-packages layer stays in the read-only image.
+# Repo-supplied dependencies land in a tmpfs-backed venv at runtime.
+USER trikon
+WORKDIR /workspace
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# The runner sends every command via `docker exec`. The image only needs a
+# process to keep alive; `sleep infinity` is the smallest such surface.
+CMD ["sleep", "infinity"]

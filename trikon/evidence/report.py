@@ -23,7 +23,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-Decision = Literal["allow", "block", "require_human"]
+# Decision is widened to four values. `PolicyDecision` is defined as an alias
+# for the same Literal so downstream code that wants to signal "this variable
+# holds a rule outcome (may be warn)" as distinct from "this variable holds a
+# terminal decision (never warn)" can annotate accordingly. Both aliases
+# resolve to the same runtime type; the split is documentation, not
+# enforcement (design.md §3.6).
+#
+# The widening is source-compatible: every existing consumer that asserts
+# ``decision in ("allow", "block", "require_human")`` continues to work,
+# because :func:`trikon.sdk.verify` never emits ``decision == "warn"`` on any
+# path — see the invariant note on :attr:`Verdict.decision` below.
+Decision = Literal["allow", "block", "require_human", "warn"]
+PolicyDecision = Decision  # documented alias; identical Literal.
 BlastBucket = Literal["LOW", "MEDIUM", "HIGH"]
 
 
@@ -84,10 +96,19 @@ class StaticReport(BaseModel):
 
 
 class PluginResult(BaseModel):
-    """Output of a single repo-defined custom check."""
+    """Output of a single repo-defined custom check.
+
+    ``error`` is populated when the plugin failed to import, its
+    ``check`` function was missing or non-callable, was declared with
+    ``async def`` (Requirement 4.3), raised at runtime (Requirement 4.2),
+    or exceeded its per-plugin timeout. When ``error`` is set,
+    ``findings`` is empty; per-plugin failures never raise past the
+    verification runner (design.md §8).
+    """
 
     plugin: str
     findings: list[dict[str, object]] = Field(default_factory=list)
+    error: str | None = None
 
 
 class VerificationReport(BaseModel):
@@ -105,7 +126,12 @@ class RuleResult(BaseModel):
 
     rule_name: str
     matched: bool
-    would_emit: Decision | None
+    # ``would_emit`` now covers all four decisions — a warn rule that fires
+    # still reports ``would_emit="warn"`` in its trace entry (Requirement 3.4,
+    # design.md §3.6). ``PolicyDecision`` is used as the annotation to signal
+    # "this is a rule outcome (may be warn)" — it is identical at runtime to
+    # ``Decision``.
+    would_emit: PolicyDecision | None
     reason: str | None
 
 
@@ -120,13 +146,32 @@ class Evidence(BaseModel):
 class Verdict(BaseModel):
     """The final decision, with full evidence attached."""
 
+    # ``Decision`` is four-valued at the type level, but the SDK-boundary
+    # invariant is that emitted Verdicts carry only terminal values
+    # (``allow`` | ``block`` | ``require_human``), never ``"warn"`` — warn is
+    # a rule outcome, not a verdict outcome (design.md §3.6). The Pydantic
+    # type accepts ``"warn"`` for forward-compat and round-tripping, but
+    # :func:`trikon.sdk.verify` never returns such a Verdict on any path.
     decision: Decision
     reason: str
     matched_rule: str | None
     evidence: Evidence
     audit_id: UUID
     created_at: datetime
-    schema_version: int = 1
+    # New field (design.md §3.6). Rule-declaration order is preserved by
+    # ``evaluate_policy``; an empty list is the "no warn matched" case.
+    # Never ``None`` — a warn-empty Verdict carries ``warnings == []``
+    # (Requirement 3.3). ``default_factory=list`` gives every fresh instance
+    # its own list so mutations never leak across Verdicts, and a v1-shaped
+    # JSON payload lacking the ``warnings`` key deserializes with ``[]``.
+    warnings: list[str] = Field(default_factory=list)
+    # Bumped 1 → 2 because the shape of the JSON grew: ``Decision`` widened
+    # to four values and ``warnings`` was added (design.md §3.6). Downstream
+    # consumers pinned to ``schema_version == 1`` will see the version bump
+    # before they see an unfamiliar ``warnings`` key (Requirement 4.2). A
+    # v1-shaped payload without a ``schema_version`` field deserializes with
+    # ``schema_version == 2`` via this default.
+    schema_version: int = 2
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,148 @@
+---
+title: "Verification Troubleshooting"
+description: "Diagnosing the common failure modes of the Phase 2 verification runner — Docker, coverage-map staleness, plugin timeouts, and the sandbox deadline."
+---
+
+Every failure mode below shows the diagnostic you will see on the [Verdict](/concepts/verdicts) or in `trikon debug verify` output, and the fix. When a verification error escapes the runner, the SDK returns `require_human` — never `allow`. That is the [never-fail-open](/verification/overview#never-fail-open) contract; troubleshooting only aims to turn a `require_human` back into a productive verdict.
+
+## Docker daemon unreachable
+
+**Symptom.** `SandboxUnavailableError` on the verdict; message includes the socket path that was attempted:
+
+```
+SandboxUnavailableError: cannot reach Docker daemon at unix:///var/run/docker.sock
+```
+
+On Windows the message will name `npipe:////./pipe/docker_engine`; on a rootless setup it will name `unix:///run/user/1000/docker.sock`.
+
+**Cause.** One of:
+
+- Docker Desktop is not running (macOS / Windows).
+- The Docker daemon is stopped (Linux).
+- The current user lacks permission on the socket (Linux, no `docker` group membership).
+- `DOCKER_HOST` is set to something the client cannot reach.
+
+**Fix.**
+
+<CodeGroup>
+```bash macOS / Windows
+# Start Docker Desktop from the tray, then verify:
+docker info
+```
+```bash Linux
+sudo systemctl start docker
+# Or add yourself to the docker group and log back in:
+sudo usermod -aG docker $USER
+```
+```bash Rootless
+systemctl --user start docker
+export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock
+```
+</CodeGroup>
+
+Once `docker info` prints a server section, re-run `trikon debug verify`.
+
+## Coverage map is stale
+
+**Symptom.** `TestReport.coverage_map_stale=True` on the verdict; the CLI human formatter shows `(coverage map stale — using filename heuristic)`.
+
+**Cause.** One of:
+
+- The coverage map is older than 7 days (`built_at` predates the current wall-clock by more than a week).
+- `built_against_sha` in `coverage_map` disagrees with the change's `base_sha` — the map was built against a different history than the change is landing on.
+- The map has never been built (fresh `.trikon/state.db`).
+
+The verdict is not necessarily wrong when the map is stale — the runner routes every impacted symbol through the [filename heuristic fallback](/verification/overview#test-selection) — but you may see either over- or under-selection depending on how tests are laid out relative to production code.
+
+**Fix.** Rebuild the map:
+
+```bash
+trikon coverage build --repo .
+```
+
+The command runs the full pytest suite once with `coverage.py` instrumentation and overwrites the `coverage_map` and `tests_seen` rows in `.trikon/state.db`. On [`examples/sample_repo`](https://github.com/suryansh639/Trikon/tree/main/examples/sample_repo) the rebuild completes in under 30 seconds; Django-sized suites take 3-5x longer than a normal pytest run. Do it overnight for very large repos.
+
+Failure of the rebuild itself surfaces as `CoverageBuildError` and exits `1`. The previously-persisted rows are left untouched (Requirement 5.3), so a failed rebuild does not leave the cache in a worse state than before.
+
+## Plugin timed out
+
+**Symptom.** `PluginResult.error="plugin exceeded 30.0s timeout"` on one entry of `verification.plugins[…]`; every other plugin in the same verdict still runs and still lands findings.
+
+**Cause.** The plugin's `check(ctx)` function did not return within the [per-plugin timeout](/verification/plugin-authoring#per-plugin-timeout) (default 30 s). Common triggers:
+
+- A regex scan across large binary files that were not filtered out early.
+- Attempted network access under `network_mode="none"` — the connect blocks until the kernel timeout, which typically exceeds the plugin ceiling.
+- Recursive `ctx.read_bytes` reads on generated or vendored trees.
+
+**Fix.** Two options in preference order:
+
+1. **Optimize the plugin.** Filter by extension before reading; short-circuit on `if not str(path).endswith(".py"): continue`; use `bytes.find` on a small window instead of a regex over the whole file.
+2. **Increase the timeout.** Override `per_plugin_timeout_seconds` on the SDK call site if the plugin genuinely needs longer. See the [plugin authoring guide](/verification/plugin-authoring#per-plugin-timeout).
+
+If the same plugin repeatedly times out, prefer option 1. A slow plugin taxes every verdict, not just the one that flagged it.
+
+## Sandbox exceeded 5-minute deadline
+
+**Symptom.** `TestReport.status="failed"` with exactly one `TestResult`:
+
+```json
+{
+  "node_id": "<sandbox>",
+  "outcome": "errored",
+  "failure_summary": "sandbox exceeded 5-minute deadline"
+}
+```
+
+**Cause.** The whole verdict — pytest, ruff, mypy, and every plugin combined — took longer than the 300 second wall-clock ceiling (Requirement 2.2). Common triggers:
+
+- A pytest that hangs on `input()` or on a network socket the sandbox refuses to allow.
+- A repo whose dev-dependency install (`pip install --no-deps -e .[dev]`) takes longer than the cold budget allows on a slow disk or network.
+- An integration test suite that assumes a running database and blocks on `psycopg2.connect`.
+
+The synthesized `errored` TestResult means the runner detected the timeout and returned normally — it did not raise past the module boundary. The SDK still produces a Verdict; the decision is `require_human` because the tests did not actually finish.
+
+**Fix.** Investigate what was running when the deadline elapsed:
+
+1. Run `trikon debug verify --repo . --base <base> --head <head>` and watch stdout. The sandbox streams pytest output as it runs, so the last test to enter is the likely culprit.
+2. Check for a test that opens a network socket, waits on stdin, or spawns a subprocess that itself blocks. The sandbox is `network_mode="none"` by default, so any test that expects internet access will hang until the deadline.
+3. Isolate the suspect test locally with `pytest <node_id>` and confirm it exits in a reasonable time.
+4. Skip or fix the offending test. If the test legitimately needs network access, declare a [network allowlist](#network-allowlist-not-enforced) — with the Phase 2 caveat below.
+
+## Network allowlist not enforced
+
+**Symptom.** A verdict where the policy declared a `network_allowlist` but a test appeared to reach an off-allowlist host successfully — or a container log showing an unrestricted `curl` call succeeding.
+
+<Warning>
+  **Phase 2 warning.** The network-allowlist branch of the sandbox is behind a warning while the iptables sidecar is hardened. Do not rely on it to gate production egress until Phase 3 flips the invariant. Until then, treat any verdict that requires network access as `require_human` regardless of what the allowlist appears to permit.
+</Warning>
+
+**Cause.** The Phase 2 implementation creates the dedicated Docker bridge network, attaches the container to it, and installs the iptables rules — but the containers-only netns iptables path has known gaps on rootless Docker and on hosts where `iptables-nft` and `iptables-legacy` are both installed. The safe default in Phase 2 is `network_mode="none"`.
+
+**Fix.**
+
+- Wait for Phase 3, which lands hardened allowlist enforcement and the corresponding CI check.
+- Until then, either scope the affected test to a `network_mode="none"` fake (via `responses`, `httpretty`, or an in-repo fixture) or move the network-dependent test out of the verified suite.
+- If you have a compelling need for early access to the allowlist branch, treat verdicts that require it as `require_human` in your policy and gate merge on manual review.
+
+## Getting more diagnostic detail
+
+`trikon debug verify` is verbose by default. The [`--json`](/cli/verify#examples) flag emits the full Verdict including every stage's timings and every raise-site exception message. When filing an issue against Trikon:
+
+```bash
+trikon debug verify --repo . --base main --head HEAD --json > /tmp/verdict.json
+```
+
+Attach `/tmp/verdict.json` and the output of:
+
+```bash
+docker info
+docker image inspect trikon/sandbox:0.1.0 --format '{{ .Id }}'
+trikon version
+```
+
+## Related
+
+- [Overview](/verification/overview) — the pipeline and the never-fail-open contract
+- [Plugin authoring](/verification/plugin-authoring) — writing checks that stay inside the per-plugin timeout
+- [Verdicts](/concepts/verdicts) — the shape of the object every diagnostic here lands on
+- [`trikon verify`](/cli/verify) — the full-pipeline CLI wrapper

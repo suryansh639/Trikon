@@ -1,0 +1,148 @@
+---
+title: "Verification Overview"
+description: "Phase 2 of Trikon. Turns an ImpactSet into executed evidence — pytest, ruff, mypy, and repo plugins run inside a pinned Docker sandbox."
+---
+
+Verification is the part of Trikon that actually runs the tests and lints on a change and reports whether they passed. It is Phase 2 of the [12-week build](https://github.com/suryansh639/Trikon/blob/main/EXECUTION_PLAN.md): the layer that lets `sdk.verify()` attach real evidence to a [Verdict](/concepts/verdicts).
+
+<Note>
+  **Phase 2 status.** The verification runner is live behind `trikon debug verify`. `sdk.verify()` now returns a [Verdict](/concepts/verdicts) whose `evidence.verification` is populated — but the decision remains `require_human` until the policy engine ships in Phase 3. Details: [`docs/verification.md`](https://github.com/suryansh639/Trikon/blob/main/docs/verification.md) on GitHub.
+</Note>
+
+## What it does
+
+Given a git repo and the [`ImpactSet`](/concepts/blast-radius) produced by Change Intelligence, the verification runner emits a `VerificationReport`:
+
+```
+ImpactSet
+   │
+   ▼
+run_verification (Docker sandbox)
+   │
+   ├── select_impacted_tests  → coverage_map lookup, filename fallback
+   ├── pytest <selected node IDs>
+   ├── ruff  <changed files>   → diff vs static_baseline
+   ├── mypy  <changed files>   → diff vs static_baseline
+   └── .trikon/checks/*.py     → repo-defined plugins
+   │
+   ▼
+VerificationReport
+   │
+   ▼
+sdk.verify → Verdict(evidence.verification=…)
+```
+
+The report is a Pydantic model with four top-level fields: `tests` (pytest outcomes), `static` (ruff + mypy findings with a `is_new` flag), `plugins` (per-plugin findings and error slots), and `sandbox_ms` + `total_ms` timings. This shape is what the policy engine will grade in Phase 3.
+
+## The pytest-first invariant
+
+Test execution is the primary evidence surface. Everything else is additive:
+
+1. **`tests.status`** is the strongest signal. A failed pytest run in the impacted set is what most policies key on.
+2. **`static.new_errors`** is a delta, not an absolute. A change introduces a new ruff or mypy diagnostic only if its `(path, line, rule_id)` triple is absent from the [baseline run](/concepts/verdicts) captured against the base SHA. Pre-existing findings do not block the change that touched their file — that is a lint-cleanup task, not a verdict signal.
+3. **`plugins[…].findings`** are what a customer's own policy relies on. See [plugin authoring](/verification/plugin-authoring).
+
+Pytest, ruff, mypy, and plugins all run sequentially inside a single container. Rationale is in [`design.md §2.4`](https://github.com/suryansh639/Trikon/blob/main/.kiro/specs/verification-runner/design.md) — parallelism would recover a few seconds at the cost of both the timeout-accounting story and the deterministic log ordering the CLI relies on.
+
+## Sandbox isolation
+
+Everything the verification runner executes runs inside `trikon/sandbox:0.1.0`, a pinned Docker image the runner controls end to end.
+
+| Guarantee | How |
+| --- | --- |
+| Repo mounted read-only | Bind-mount at `/workspace/repo` with `read_only=True` |
+| No network by default | `network_mode="none"` — see [network allowlist](#network-allowlist) for the opt-in |
+| Non-root process | Every command runs as `uid=10001, gid=10001` (`trikon` user) |
+| No capabilities | `cap_drop=["ALL"]` and `no-new-privileges:true` |
+| Read-only root FS | Only tmpfs at `/workspace/tmp` and `/workspace/pip-cache` is writable |
+| Resource ceiling | 2 GB memory, 2 CPUs, 512 PID limit |
+| Pinned tool versions | `pytest==8.3.3`, `ruff==0.7.4`, `mypy==1.13.0`, `coverage==7.6.7` — every pin is exact |
+
+Bumping any tool pin is a deliberate [`Dockerfile.sandbox`](https://github.com/suryansh639/Trikon/blob/main/Dockerfile.sandbox) edit that invalidates the `static_baseline` cache at the tool-version boundary. That is intentional: the runner controls the invalidation surface, not the repo's `pyproject.toml`.
+
+## Fitting into the Trikon pipeline
+
+Verification sits between Change Intelligence (Phase 1) and the Policy Engine (Phase 3):
+
+```
+                                 Phase 1                    Phase 2                   Phase 3
+git diff  ──▶  parse_diff  ──▶  compute_impact  ──▶  run_verification  ──▶  policy engine  ──▶  Verdict
+                                     │                       │                     │
+                                     ▼                       ▼                     ▼
+                                 ImpactSet          VerificationReport     decision + audit
+```
+
+- **Input**: an [`ImpactSet`](/concepts/blast-radius) with `changed_files`, `changed_symbols`, `impacted_tests`, and the base SHA.
+- **Output**: a `VerificationReport` embedded on `Evidence.verification` in the returned [Verdict](/concepts/verdicts).
+
+The SDK boundary is one `try` block. Any subclass of `VerificationRunnerError` that escapes `run_verification` becomes `require_human` with the `EMPTY_VERIFICATION` sentinel — never `allow`. See [never-fail-open](#never-fail-open).
+
+## Test selection
+
+Trikon does not run the whole test suite on every verdict. It picks the impacted subset:
+
+1. **Coverage-map lookup** — per changed symbol, query `coverage_map` in `.trikon/state.db` keyed on `(qualified_name, base_sha)` for the pytest node IDs that exercise it.
+2. **Filename heuristic fallback** — for any symbol without a coverage-map row, try `tests/test_{leaf}.py` and `tests/{pkg}/test_{leaf}.py`.
+3. **Staleness override** — when the coverage map is older than 7 days OR its `built_against_sha` disagrees with the change's `base_sha`, every symbol routes through the fallback and `TestReport.coverage_map_stale=True` propagates onto the verdict.
+
+Rebuild the map with `trikon coverage build` after significant test-suite reorganization.
+
+## Static-check diffing
+
+Ruff and mypy run head-side against the changed files. Each finding carries `is_new`:
+
+- `is_new=True` when its `(path, line, rule_id)` triple is absent from the baseline captured at `base_sha`.
+- Baselines are cached per `(base_sha, tool, tool_version)` in the `static_baseline` table. A `pyproject.toml` bump from `ruff==0.7.4` to `ruff==0.8.0` makes every cached row for `tool='ruff'` unreachable by lookup — the new version writes a fresh row.
+- Message text deliberately does not participate in the `is_new` diff. Ruff and mypy sometimes reformat messages between patch versions without the underlying diagnostic changing.
+
+## Plugins
+
+Every `.trikon/checks/*.py` module that exports `check(context: CheckContext) -> list[Finding]` runs on every verdict, imported inside the sandbox, with the same read-only mount and network posture as pytest.
+
+Per-plugin failures — import errors, `async def check`, runtime exceptions, per-plugin timeouts — are recorded on `PluginResult.error` and execution continues with the remaining plugins. The runner never crashes on a plugin fault.
+
+Full authoring guide: [plugin authoring](/verification/plugin-authoring).
+
+## Network allowlist
+
+Egress is off by default. When a policy declares `network_allowlist`, the runner creates a dedicated Docker bridge network for the verdict, attaches the container to it instead of `network_mode="none"`, and installs iptables rules inside the netns to allow only those hosts and CIDRs, drop everything else, and always allow `127.0.0.0/8`. Hostnames are resolved once at sandbox entry against the host resolver; the resolved IP set is what the rules pin.
+
+<Warning>
+  **Phase 2 warning.** The allowlist code path is behind a warning in Phase 2 while the iptables sidecar is hardened. Do not rely on it to gate production egress until Phase 3 flips the invariant. See [troubleshooting](/verification/troubleshooting#network-allowlist-not-enforced).
+</Warning>
+
+## Never fail-open
+
+Every raise site inside `trikon/verify/**` is a subclass of `VerificationRunnerError`. The SDK boundary catches that base class and returns a `require_human` verdict backed by the `EMPTY_VERIFICATION` sentinel — never `allow`. Timeouts are converted to a synthesized failed `TestReport` inside the runner and never surface as exceptions past the module boundary.
+
+The subclasses you might see reported through the CLI or logs:
+
+- `SandboxUnavailableError` — Docker daemon unreachable. Message includes the socket path attempted.
+- `SandboxExecError` — image pull, mount, or non-timeout container failure.
+- `TestSelectionError` — coverage-map query failed.
+- `StaticCheckError` — worktree materialization or tool-version capture failed.
+- `PluginLoadError` — plugin shim or output file missing (infrastructure, not per-plugin).
+- `CoverageBuildError` — `trikon coverage build` failed.
+
+Every diagnostic is designed for a human on-call. Troubleshooting steps for each: [troubleshooting](/verification/troubleshooting).
+
+## Performance
+
+On the [`examples/sample_repo`](https://github.com/suryansh639/Trikon/tree/main/examples/sample_repo) `bad_retry` scenario on a modern developer laptop:
+
+| Run | Wall-clock ceiling | Typical |
+| --- | --- | --- |
+| Cold (first verdict, image pull, no baseline) | 60 s | 25-40 s |
+| Warm (image cached, baseline hit, coverage-map hit) | 15 s | 5-9 s |
+| `trikon coverage build` | 30 s | 8-12 s |
+
+Detailed budget per stage: [`design.md §2.3`](https://github.com/suryansh639/Trikon/blob/main/.kiro/specs/verification-runner/design.md).
+
+## Related
+
+- [Blast radius](/concepts/blast-radius) — how Trikon decides which tests to run
+- [Verdicts](/concepts/verdicts) — the shape of the object verification feeds into
+- [Policy DSL](/concepts/policy-dsl) — how a verdict grades verification evidence
+- [Plugin authoring](/verification/plugin-authoring) — write your own repo-specific checks
+- [Troubleshooting](/verification/troubleshooting) — common sandbox and coverage-map failure modes
+- [`trikon verify`](/cli/verify) — the CLI wrapper for the full pipeline

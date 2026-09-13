@@ -6,13 +6,22 @@ defined here. Nothing raises bare :class:`Exception`, :class:`ValueError`,
 that closure is what lets :func:`trikon.sdk.verify` translate any internal
 failure into a ``require_human`` verdict without ambiguity.
 
+Phase 2 re-parents :class:`ChangeIntelError` under
+:class:`trikon.exceptions.TrikonError` so the SDK boundary can catch a single
+class when Phase 3 fuses the change-intel and verification ``try`` blocks.
+The subclass hierarchy below is unchanged; only the base class shifts from
+:class:`Exception` to :class:`~trikon.exceptions.TrikonError`, so every
+existing ``except ChangeIntelError`` site continues to work.
+
 See ``design.md §Error Handling`` and ``requirements.md §Requirement 6``.
 """
 
 from __future__ import annotations
 
+from trikon.exceptions import TrikonError
 
-class ChangeIntelError(Exception):
+
+class ChangeIntelError(TrikonError):
     """Base class for every error raised by :mod:`trikon.change_intel`.
 
     Raised when a Change Intelligence stage cannot complete its work and needs

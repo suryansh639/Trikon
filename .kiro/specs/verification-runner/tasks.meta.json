@@ -1,0 +1,722 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Create `trikon/exceptions.py` with the `TrikonError` root": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933182
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225956145
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226433815
+      }
+    ],
+    "1.2 Create `trikon/verify/errors.py` with `VerificationRunnerError` + subclasses": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933258
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226444011
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226688546
+      }
+    ],
+    "2.1 Create `trikon/verify/models.py` with the frozen dataclasses": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933327
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225957107
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226434911
+      }
+    ],
+    "2.2 Add `DEFAULT_STATIC_TOOLS` tuple to `trikon/verify/models.py`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933394
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226444226
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226689660
+      }
+    ],
+    "3.1 Create `trikon/verify/db.py` with `ensure_verify_tables`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933461
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225958352
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226435625
+      }
+    ],
+    "3.2 Wire `ensure_verify_tables` into `trikon.change_intel.cache.open_connection`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933527
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226445427
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226690780
+      }
+    ],
+    "4.1 Author `Dockerfile.sandbox` at the repo root": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933594
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225959215
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226436849
+      }
+    ],
+    "4.2 Add `scripts/build_sandbox_image.sh`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933659
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225959943
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226437758
+      }
+    ],
+    "4.3 Seed `docs/verification.md` with the image contract": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933731
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226446345
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226691907
+      }
+    ],
+    "5.1 Replace `trikon/verify/sandbox.py` stub with the full `LocalDockerSandbox` class": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933824
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227045618
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227904808
+      }
+    ],
+    "5.2 Implement timeout enforcement in `LocalDockerSandbox.exec`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933921
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227915426
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228394369
+      }
+    ],
+    "5.3 Implement the network-allowlist branch in `LocalDockerSandbox`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225933987
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228404079
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232243136
+      }
+    ],
+    "6.1 Land the core algorithm in `trikon/verify/test_selector.py`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934050
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227045548
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227905716
+      }
+    ],
+    "6.2 Implement the filename-heuristic fallback and deterministic sort": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934127
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227916849
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228396287
+      }
+    ],
+    "7.1 Land the core algorithm in `trikon/verify/static_checks.py`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934196
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227045728
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227907352
+      }
+    ],
+    "7.2 Implement the baseline cache, git-worktree materialization, and per-tool parsers": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934268
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227917135
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228393350
+      }
+    ],
+    "8.1 Ship `trikon/verify/_plugin_shim.py` — the in-sandbox shim": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934346
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226709924
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227020173
+      }
+    ],
+    "8.2 Implement `load_and_run_plugins` in `trikon/verify/plugins.py`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934440
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227046856
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227907839
+      }
+    ],
+    "8.3 Implement per-plugin timeout enforcement and async rejection surfacing": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934565
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227920333
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228395084
+      }
+    ],
+    "9.1 Replace `trikon/verify/runner.py` stub with the orchestrator body": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934634
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228404995
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232244120
+      }
+    ],
+    "9.2 Implement pytest execution and timeout synthesis": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934706
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232259313
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233173669
+      }
+    ],
+    "10.1 Create `trikon/verify/coverage_builder.py` with the builder body": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934775
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228406140
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232245082
+      }
+    ],
+    "10.2 Implement persistence with single-transaction atomicity": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934842
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232259535
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233172690
+      }
+    ],
+    "11.1 Author the human formatter at `trikon/evidence/formatters/verify_text.py`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934916
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227047856
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227908932
+      }
+    ],
+    "11.2 Extend `trikon/cli.py` with `debug verify` and `coverage build`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225934989
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232260540
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233174779
+      }
+    ],
+    "12.1 Update `trikon/sdk.py::verify` body per `design.md §10`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935058
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228407256
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232245923
+      }
+    ],
+    "12.2 Widen the fail-closed except clause to include `VerificationRunnerError`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935127
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232261664
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233172946
+      }
+    ],
+    "14.2 Register `perf` and `integration` markers in `pyproject.toml`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935194
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789227920546
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228397124
+      }
+    ],
+    "14.3 Add the nightly `perf` job to `.github/workflows/ci.yml`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935284
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228408480
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232242925
+      }
+    ],
+    "15.1 Extend `docs/verification.md` into the full end-user guide": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935393
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233175742
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234235526
+      }
+    ],
+    "15.2 Author `docs-site/pages/verification/*.mdx` — three MDX pages": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935496
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233176853
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234236594
+      }
+    ],
+    "15.3 Update `CHANGELOG.md` with the Phase 2 section": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935568
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233177660
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234237631
+      }
+    ],
+    "15.4 Extend `README.md`'s \"What Trikon does today\" section": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935641
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233178997
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234238720
+      }
+    ],
+    "16.1 Extend `pyproject.toml` coverage config": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935705
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233179900
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234239580
+      }
+    ],
+    "16.2 Achieve `mypy --strict trikon/verify/` cleanliness": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935772
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234240698
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789235237658
+      }
+    ],
+    "16.3 Achieve `ruff check` and `ruff format --check` cleanliness on `trikon/verify/`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789225935842
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234241613
+      },
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789235238600
+      }
+    ],
+    "1. Establish the shared exception root and Verification Runner error hierarchy": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226688658
+      }
+    ],
+    "2. Materialize the verify subsystem data models": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226689739
+      }
+    ],
+    "3. Land the SQLite schema for `coverage_map`, `tests_seen`, and `static_baseline`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226690850
+      }
+    ],
+    "4. Ship the pinned sandbox Docker image": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789226691975
+      }
+    ],
+    "7. Implement `run_static_checks` — ruff + mypy with baseline diff": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228393435
+      }
+    ],
+    "8. Implement `load_and_run_plugins` — sandbox-isolated plugin execution": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228395161
+      }
+    ],
+    "6. Implement `select_impacted_tests` — coverage-map lookup with filename fallback": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789228396365
+      }
+    ],
+    "14. Perf smoke tests and CI wiring": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232243046
+      }
+    ],
+    "5. Implement `LocalDockerSandbox` — the Docker isolation layer": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789232243371
+      }
+    ],
+    "10. Implement `build_coverage_map` — the `trikon coverage build` backend": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233172865
+      }
+    ],
+    "12. Wire the SDK — `sdk.verify` calls `run_verification`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233173026
+      }
+    ],
+    "9. Wire `run_verification` — the orchestrator entry point": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233173775
+      }
+    ],
+    "11. Wire the CLI — `trikon debug verify` and `trikon coverage build`": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789233174863
+      }
+    ],
+    "15. Documentation — end-user guide, MDX pages, CHANGELOG, README": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789234238796
+      }
+    ],
+    "16. Coverage and lint gates — enforce 85 % branch coverage and mypy-strict cleanliness": [
+      {
+        "executionId": "ff579510-29b7-4135-abbf-7c4d9bb0a6b6",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789235238685
+      }
+    ]
+  }
+}

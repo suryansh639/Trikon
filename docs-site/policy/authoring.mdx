@@ -1,0 +1,300 @@
+---
+title: "Policy Authoring"
+description: "Write .trikon/policy.yaml rules against the full DSL — five condition types, four then values, first-match-terminal semantics, warn accumulation, and the require_human fall-through."
+---
+
+Every rule in `.trikon/policy.yaml` is a `when` clause that inspects the evidence, and a `then` value that says what to do when the clause matches. This page is the full reference for both sides.
+
+## The Policy schema
+
+A policy file has four top-level fields. Only `rules` is required.
+
+```yaml
+version: 1                     # schema version, currently 1
+weights:                       # optional; tunes blast_radius scoring
+  impacted_public_apis: 3.0
+  sensitive_path_touch: 5.0
+sensitive_paths:               # optional; auto-flagged in blast_radius
+  - "auth/**"
+  - "**/migrations/**"
+rules:                         # required; a list of rule objects
+  - name: "…"
+    when: {…}
+    then: allow | block | require_human | warn
+    reason: "…"
+```
+
+The [`Policy`](/concepts/policy-dsl) Pydantic model rejects unknown top-level fields and unknown fields on `Rule`. Malformed YAML surfaces as [`PolicyLoadError`](/policy/troubleshooting#malformed-policy-yaml).
+
+### Rule fields
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `name` | `str` | yes | Human-readable identifier. Surfaced as `verdict.matched_rule` when the rule wins. |
+| `when` | `dict` | no | Zero or more condition keys. Empty (`{}` or omitted) means unconditional match. |
+| `then` | `Decision` | yes | One of `allow`, `block`, `require_human`, `warn`. |
+| `reason` | `str \| None` | no | Free-text explanation. Surfaced as `verdict.reason` on match; synthesized default when omitted. |
+
+## The five condition types
+
+Every key inside `when:` must be one of the five listed below. Unknown keys raise [`RuleMatchError`](/policy/troubleshooting#unknown-condition-key) — the evaluator refuses to guess.
+
+### `any_path_matches: [glob, …]`
+
+Matches iff at least one glob matches at least one entry in `impact.changed_files`. Globs use POSIX-style path semantics; `**` recurses across directory boundaries.
+
+```yaml
+- name: "sensitive path requires human"
+  when:
+    any_path_matches:
+      - "auth/**"
+      - "billing/**"
+      - "payments/**"
+      - "**/migrations/**"
+  then: require_human
+  reason: "Change touches a sensitive subsystem."
+```
+
+`auth/**` matches `src/auth/token.py`; `**/migrations/**` matches `apps/users/migrations/0001_initial.py`. An empty pattern list is a syntactically valid `when:` clause that never matches.
+
+### `no_path_matches: [glob, …]`
+
+The dual of `any_path_matches`. Matches iff no glob matches any changed file.
+
+```yaml
+- name: "skip docs-only changes"
+  when:
+    no_path_matches:
+      - "docs/**"
+      - "**.md"
+  then: allow
+  reason: "No non-docs paths were touched."
+```
+
+Reads as "if none of these path patterns fire, treat the change as safe". Useful for carving out low-risk classes of change (docs, changelogs, README edits).
+
+### `change.blast_radius.score: LOW | MEDIUM | HIGH`
+
+Literal string equality against `impact.blast_radius_score`. Case-sensitive.
+
+```yaml
+- name: "large blast radius requires human"
+  when:
+    change.blast_radius.score: HIGH
+  then: require_human
+  reason: "Blast radius is HIGH; a human should review scope."
+```
+
+`LOW`, `MEDIUM`, and `HIGH` are the only accepted values — anything else never matches (though nothing raises, because equality is the semantic).
+
+### `verification.tests.status: passed | failed | skipped`
+
+Literal string equality against `verification.tests.status`.
+
+```yaml
+- name: "impacted tests failed"
+  when:
+    verification.tests.status: failed
+  then: block
+  reason: "One or more impacted tests failed."
+```
+
+`passed` means every impacted test passed. `failed` means at least one impacted test failed. `skipped` means the runner had nothing to execute (empty impacted set, or a coverage-map miss with no filename-heuristic hits).
+
+### `verification.static.new_errors: {eq|gt|lt: N}`
+
+Counts findings on `verification.static.findings` whose `is_new` is `True`, then compares that count to the integer threshold under one operator.
+
+```yaml
+- name: "new static-analysis errors"
+  when:
+    verification.static.new_errors:
+      gt: 0
+  then: block
+  reason: "Change introduced new static-analysis errors."
+```
+
+Exactly one operator per condition. The three accepted operators map to `operator.eq`, `operator.gt`, and `operator.lt`. All three shape violations raise [`RuleMatchError`](/policy/troubleshooting#unknown-condition-key):
+
+- Multi-key operator dict: `{eq: 0, gt: 5}` — reject, "expects exactly one operator".
+- Unknown operator: `{neq: 0}` — reject, "unknown operator".
+- Non-int threshold: `{eq: "zero"}` — reject, "expected int".
+
+### Multiple conditions AND together
+
+A `when:` clause with more than one key requires every key to match. Short-circuits on the first `False` — later conditions are not evaluated.
+
+```yaml
+- name: "green, low-blast auto-allow"
+  when:
+    verification.tests.status: passed
+    verification.static.new_errors:
+      eq: 0
+    change.blast_radius.score: LOW
+  then: allow
+  reason: "Tests passed, no new static errors, small blast radius."
+```
+
+This is the rule that unlocks unattended agent execution. Every one of the three conditions must hold, or the rule falls through to the next candidate.
+
+### Empty `when:` matches unconditionally
+
+An omitted or empty `when:` clause makes the rule fire on every evidence input. This is the standard shape for a fall-through rule at the end of the policy.
+
+```yaml
+- name: "default"
+  then: require_human
+  reason: "No prior rule matched; defaulting to human review."
+```
+
+## The four `then` values
+
+`then` says what to do when the rule's `when:` matches. Three of the four values are terminal; one is not.
+
+### `allow`, `block`, `require_human` — terminal
+
+The first rule with a matching `when:` and a terminal `then` in declaration order wins. Its `then` becomes `verdict.decision`, its `name` becomes `verdict.matched_rule`, its `reason` (or a synthesized default) becomes `verdict.reason`.
+
+Later rules are still evaluated so `verdict.evidence.policy_results` is complete, but they cannot overwrite the winner. This is the [first-match-terminal](/policy/overview#first-match-terminal) contract.
+
+### `warn` — non-terminal
+
+A matching `warn` rule appends its reason to `verdict.warnings` and evaluation continues to the next rule. `warn` never sets `verdict.decision`.
+
+```yaml
+- name: "warn on migration alongside code"
+  when:
+    any_path_matches:
+      - "**/migrations/**"
+  then: warn
+  reason: "Migration touched — verify the rollout plan."
+```
+
+The behaviour splits along one axis:
+
+- One `warn` rule fires, one terminal rule also fires: the terminal wins for `decision`; the warning still lands on `verdict.warnings` in declaration order.
+- Only `warn` rules fire: the policy falls through to `decision="require_human"`, `matched_rule=None`, and `verdict.warnings` holds every accumulated reason.
+- No rule fires: same fall-through, `verdict.warnings == []`.
+
+`verdict.warnings` is a list, never `None`. Reasons appear in rule-declaration order, deduplicated only by the fact that each rule fires at most once per evaluation.
+
+## Worked example
+
+A full six-rule policy that demonstrates every condition type, both terminal and non-terminal `then` values, and an explicit `require_human` fall-through.
+
+```yaml
+version: 1
+
+sensitive_paths:
+  - "auth/**"
+  - "billing/**"
+  - "payments/**"
+  - "**/migrations/**"
+
+rules:
+
+  # 1) Sensitive subsystems ALWAYS require a human.
+  - name: "sensitive path requires human"
+    when:
+      any_path_matches:
+        - "auth/**"
+        - "billing/**"
+        - "payments/**"
+        - "**/migrations/**"
+    then: require_human
+    reason: "Change touches a sensitive subsystem."
+
+  # 2) Warn (do not block) when a migration lands.
+  - name: "warn on migration"
+    when:
+      any_path_matches:
+        - "**/migrations/**"
+    then: warn
+    reason: "Migration touched — verify the rollout plan."
+
+  # 3) Any impacted test failure blocks.
+  - name: "impacted tests failed"
+    when:
+      verification.tests.status: failed
+    then: block
+    reason: "One or more impacted tests failed."
+
+  # 4) A new static-analysis error blocks. Baseline noise is ignored.
+  - name: "new static-analysis errors"
+    when:
+      verification.static.new_errors:
+        gt: 0
+    then: block
+    reason: "Change introduced new static-analysis errors."
+
+  # 5) Green + small blast + no new lint noise → auto-allow.
+  - name: "green, low-blast auto-allow"
+    when:
+      verification.tests.status: passed
+      verification.static.new_errors:
+        eq: 0
+      change.blast_radius.score: LOW
+    then: allow
+    reason: "Tests passed, no new static errors, small blast radius."
+
+  # 6) Fall-through: default to human review. Never silently allow.
+  - name: "default"
+    then: require_human
+    reason: "No prior rule matched; defaulting to human review."
+```
+
+Trace three scenarios through this policy:
+
+<CodeGroup>
+```text bad_retry (payments/, tests fail)
+Rule 1: matches (payments/retry.py in changed_files) → decision=require_human, WIN
+Rule 2: not evaluated as a winner (rule 1 already terminal), but recorded
+Rule 3: matches (tests.status=failed) — recorded, not overwriting
+Rules 4-6: recorded as considered
+Verdict: decision=require_human, matched_rule="sensitive path requires human"
+```
+```text clean_refactor (src/util, tests pass, LOW)
+Rule 1: no match
+Rule 2: no match
+Rule 3: no match (tests.status=passed)
+Rule 4: no match (new_errors=0)
+Rule 5: matches → decision=allow, matched_rule="green, low-blast auto-allow", WIN
+Rule 6: recorded, not overwriting
+Verdict: decision=allow, warnings=[]
+```
+```text migration-only (apps/users/migrations, tests pass)
+Rule 1: matches → decision=require_human, WIN
+Rule 2: matches → warnings.append("Migration touched — verify the rollout plan.")
+Rules 3-6: recorded
+Verdict: decision=require_human, matched_rule="sensitive path requires human",
+         warnings=["Migration touched — verify the rollout plan."]
+```
+</CodeGroup>
+
+The migration-only trace is the one to internalize. Rule 1 already wins on `decision`; rule 2 still fires and its warning still surfaces on `verdict.warnings`. The two rules are complementary — terminal rules decide, `warn` rules annotate.
+
+## Default policy
+
+The packaged default (`trikon/policy/default_policy.yaml`) is the six-rule shape above without the `warn on migration` rule — a conservative starting point, not an example of every DSL feature.
+
+- `trikon init` copies the packaged default into `<repo>/.trikon/policy.yaml`. `--force` overwrites an existing file; without `--force` the CLI refuses.
+- When `.trikon/policy.yaml` does not exist, `load_policy` silently returns the packaged default. No warning, no error — the wheel-shipped default is the invariant floor.
+- The packaged file is loaded via `importlib.resources.files("trikon.policy") / "default_policy.yaml"`. A missing packaged file indicates a broken wheel and raises [`PolicyLoadError`](/policy/troubleshooting#broken-wheel-missing-packaged-default).
+
+## Rule hygiene
+
+A few conventions the maintainers of `.trikon/policy.yaml` should hold:
+
+1. **Order strictest to most permissive.** Sensitive paths first, then `block` rules, then `allow` rules, then a `require_human` fall-through. The first-match-terminal contract means order is semantics, not style.
+2. **Always end with an explicit fall-through.** A `default` rule with no `when:` and `then: require_human`. Even though the engine has an implicit fall-through, an explicit rule surfaces on `verdict.matched_rule` and makes review conversations concrete.
+3. **Prefer `warn` for "flag but don't block".** A `warn` rule captures policy that is worth annotating without gating merge. Don't use `require_human` for annotations — reserve it for cases where you genuinely need a human's eyes.
+4. **Keep `reason` strings short and scannable.** They are what the reviewer sees on the Markdown-rendered Verdict. Full-sentence, present-tense, ideally under 80 characters.
+
+## Related
+
+- [Overview](/policy/overview) — the three invariants and the pipeline
+- [Policy DSL](/concepts/policy-dsl) — the Pydantic schema behind the YAML
+- [Verdicts](/concepts/verdicts) — the object the evaluator emits
+- [Troubleshooting](/policy/troubleshooting) — malformed YAML, unknown keys, and audit failures
+- [`trikon init`](/cli/init) — scaffold `.trikon/policy.yaml` from the packaged default
+- [`trikon verify`](/cli/verify) — the full-pipeline CLI wrapper

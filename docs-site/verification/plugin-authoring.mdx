@@ -1,0 +1,188 @@
+---
+title: "Plugin Authoring"
+description: "Write custom checks in .trikon/checks/*.py that run on every verdict inside the same sandbox as pytest."
+---
+
+Repo-defined plugins are how a customer's own policies (no direct SQL, no secrets in strings, audit metadata present on every migration) run alongside Trikon's built-in checks. A plugin is a single Python file that exports one function; the runner imports it inside the [verification sandbox](/verification/overview#sandbox-isolation), never in the host process.
+
+## Where plugins live
+
+Every `.py` file directly under `.trikon/checks/` in your repo (excluding files whose name starts with `_`) is a plugin. Discovery is lexicographic-sorted so execution order is deterministic:
+
+```
+.trikon/
+├── checks/
+│   ├── audit_metadata.py
+│   ├── no_direct_sql.py
+│   └── no_hardcoded_secrets.py
+├── policy.yaml
+└── state.db
+```
+
+A missing `.trikon/checks/` directory yields an empty plugin list. No error.
+
+## The `check` function
+
+Every plugin exports a single top-level function with this signature:
+
+```python
+from trikon.verify.plugins import CheckContext
+
+
+def check(ctx: CheckContext) -> list[dict[str, object]]:
+    ...
+```
+
+- **Sync only.** Trikon rejects `async def check` at load time (Requirement 4.3). Async plugin support is not on the Phase 2 roadmap.
+- **Return value.** A list of finding dicts. See [the finding shape](#the-finding-shape) below.
+- **No return type annotation is required.** But typing it as `list[dict[str, object]]` matches what the wire format actually is.
+
+### `CheckContext`
+
+The dataclass your plugin receives on every invocation:
+
+```python
+@dataclass
+class CheckContext:
+    repo_path: Path            # absolute path to the repo (inside the sandbox)
+    changed_files: list[Path]  # from the ImpactSet
+    metadata: dict[str, str]   # reserved for future extensions
+
+    def read_bytes(self, file_path: Path) -> bytes:
+        """Read a file relative to repo_path."""
+```
+
+`read_bytes` is the sanctioned way to read a changed file — do not open files directly. It keeps the read scoped to the sandbox mount and gives Trikon a single audit point for future features like cross-file cache reuse.
+
+### The finding shape
+
+Every finding your plugin returns is a JSON-serializable dict with five string / int fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `path` | `str` | Path to the file the finding applies to (relative to `repo_path`) |
+| `line` | `int` | 1-based line number; use `1` if you do not have a line |
+| `rule_id` | `str` | Short stable identifier (e.g., `"NDS001"`) — used by policy rules and for dedup |
+| `message` | `str` | Human-readable diagnostic |
+| `severity` | `str` | `"error"` or `"warning"` |
+
+The wire format is a plain dict because the sandbox shim runs against stdlib-only Python and cannot import Trikon's own types. The host-side loader re-hydrates the payload into a `PluginResult` before it lands on the [Verdict](/concepts/verdicts).
+
+## Worked example — flag direct SQL
+
+Save the following as `.trikon/checks/no_direct_sql.py`. It flags every changed file that contains a raw `cursor.execute(` call, on the assumption that the project routes all reads and writes through an ORM:
+
+```python
+# .trikon/checks/no_direct_sql.py
+"""Fail the change if any diff introduces a raw cursor.execute(...) call."""
+
+from __future__ import annotations
+
+from trikon.verify.plugins import CheckContext
+
+
+RULE_ID = "NDS001"
+FORBIDDEN = b"cursor.execute("
+
+
+def check(ctx: CheckContext) -> list[dict[str, object]]:
+    findings: list[dict[str, object]] = []
+    for rel_path in ctx.changed_files:
+        # Only Python files can contain raw SQL of this shape.
+        if not str(rel_path).endswith(".py"):
+            continue
+        try:
+            body = ctx.read_bytes(rel_path)
+        except (FileNotFoundError, IsADirectoryError):
+            # A file may have been deleted at HEAD; the ImpactSet still
+            # lists it. Skip rather than crash — per-plugin failures
+            # would end up in PluginResult.error otherwise.
+            continue
+        if FORBIDDEN not in body:
+            continue
+        # Line lookup: find the first occurrence.
+        line_no = body[: body.find(FORBIDDEN)].count(b"\n") + 1
+        findings.append(
+            {
+                "path": str(rel_path),
+                "line": line_no,
+                "rule_id": RULE_ID,
+                "severity": "error",
+                "message": (
+                    "Direct cursor.execute() call detected. "
+                    "Route database access through the ORM (see docs/db.md)."
+                ),
+            }
+        )
+    return findings
+```
+
+When a change touches `src/api/payments.py` with a `cursor.execute("SELECT …")` on line 42, the resulting `VerificationReport` carries:
+
+```json
+{
+  "plugins": [
+    {
+      "plugin": ".trikon/checks/no_direct_sql.py",
+      "findings": [
+        {
+          "path": "src/api/payments.py",
+          "line": 42,
+          "rule_id": "NDS001",
+          "severity": "error",
+          "message": "Direct cursor.execute() call detected. Route database access through the ORM (see docs/db.md)."
+        }
+      ],
+      "error": null
+    }
+  ]
+}
+```
+
+A [policy rule](/concepts/policy-dsl) can then key on `plugins[?plugin=='no_direct_sql.py'].findings` and emit `block` or `require_human`.
+
+## Per-plugin timeout
+
+Every plugin has a 30-second wall-clock ceiling by default. When a plugin exceeds it, the runner returns a `PluginResult` with `error="plugin exceeded 30.0s timeout"` and moves on to the next plugin. Subsequent plugins are unaffected.
+
+If your plugin needs longer — for example, running a large regex sweep across every changed file — override the ceiling on the caller side:
+
+```python
+from trikon.verify.plugins import load_and_run_plugins
+
+results = load_and_run_plugins(
+    sandbox, repo_path, impact,
+    per_plugin_timeout_seconds=60.0,
+)
+```
+
+The `trikon debug verify` CLI does not expose the override yet; if you need it, run the SDK directly.
+
+## Failure modes and isolation
+
+The runner catches every per-plugin failure inside the sandbox and surfaces it on `PluginResult.error` rather than raising. The four cases you will see:
+
+- **Import error** — the plugin file has a `SyntaxError` or an unresolvable import. `PluginResult.error` starts with the exception repr, e.g. `"SyntaxError('invalid syntax', …)"`.
+- **Missing `check`** — the module has no top-level `check` function or the attribute is not callable. `error="plugin missing callable 'check' function"`.
+- **`async def check`** — rejected at load time. `error="async plugins not supported in Phase 2"`. This raises a `PluginLoadError` on the host side but the runner records it as a per-plugin failure and continues (Requirement 4.3).
+- **Runtime exception** — anything raised inside `check(ctx)`. `error` is `repr(exc)`.
+
+Every other plugin in the same verdict still runs and its findings still land on the report.
+
+## What plugins cannot do
+
+The plugin process inherits the [sandbox posture](/verification/overview#sandbox-isolation):
+
+- Read-only bind mount of the repo. Do not attempt to write to `/workspace/repo`.
+- No network access unless the current policy declares an allowlist and the plugin's destination is covered by it.
+- No capabilities, no root, no `no-new-privileges` escape.
+- 2 GB memory ceiling shared with pytest, ruff, and mypy.
+
+Plugins are for cheap static checks over changed-file content. Anything that needs the network, a database, or more than a few hundred milliseconds of CPU per file belongs in a different tier of your CI.
+
+## Related
+
+- [Overview](/verification/overview) — how plugins fit into the wider pipeline
+- [Troubleshooting](/verification/troubleshooting) — plugin timeout, plugin import errors
+- [Policy DSL](/concepts/policy-dsl) — key policy rules off plugin findings
+- [`trikon verify`](/cli/verify) — the CLI wrapper that runs your plugins

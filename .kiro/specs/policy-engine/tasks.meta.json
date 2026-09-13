@@ -1,0 +1,504 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Create `trikon/policy/errors.py` with the four-class hierarchy": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279512968
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279526361
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279816183
+      }
+    ],
+    "1.2 Re-export the hierarchy from `trikon/policy/__init__.py`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279513414
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279824109
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279990618
+      }
+    ],
+    "2.1 Widen `Decision` to the four-value literal and widen `RuleResult.would_emit`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279513574
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279527470
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279816937
+      }
+    ],
+    "2.2 Add `Verdict.warnings: list[str]` and bump `Verdict.schema_version` default `1 → 2`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279514360
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279825241
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279991756
+      }
+    ],
+    "3.1 Copy `examples/policies/default.yaml` → `trikon/policy/default_policy.yaml` verbatim": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279514550
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279528613
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279818031
+      }
+    ],
+    "3.2 Wire the packaged YAML into `pyproject.toml`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279514660
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279826087
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279992789
+      }
+    ],
+    "4.1 Create `trikon/audit_log/__init__.py` and `trikon/audit_log/db.py`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279514738
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279529804
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279819103
+      }
+    ],
+    "4.2 Wire `ensure_audit_tables` into `DepGraph._get_conn`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279514816
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279827165
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279993755
+      }
+    ],
+    "5.1 Replace the `_rule_matches` stub in `trikon/policy/evaluator.py` with the full inline dispatcher and five condition helpers": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279514894
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789280054814
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281300464
+      }
+    ],
+    "6.1 Replace the `load_policy` and `default_policy` stubs with the full 5-step algorithm": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279514979
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789280055590
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281301547
+      }
+    ],
+    "7.1 Add the warn-accumulation branch and populate `Verdict.warnings` in `trikon/policy/evaluator.py::evaluate_policy`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515100
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281306509
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281425582
+      }
+    ],
+    "8.1 Create `trikon/audit_log/writer.py` and re-export from `trikon/audit_log/__init__.py`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515181
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789280056718
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281302788
+      }
+    ],
+    "9.1 Replace the one-liner stub in `trikon/evidence/formatters/markdown.py` with the full block layout": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515271
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789280058322
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281303927
+      }
+    ],
+    "10.1 Widen the fail-closed except clause to `TrikonError` and add `load_policy` + `evaluate_policy` calls inside the try block in `trikon/sdk.py::verify`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515347
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281427067
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789282519655
+      }
+    ],
+    "10.2 Add the audit-log writer call outside the try/except in `trikon/sdk.py::verify`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515434
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789282520779
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283569093
+      }
+    ],
+    "11.1 Replace the `trikon verify` stub in `trikon/cli.py` with the full command body": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515516
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789282522371
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283569792
+      }
+    ],
+    "11.2 Add the `trikon init` command in `trikon/cli.py`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515612
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789280059060
+      },
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281304776
+      }
+    ],
+    "14.1 Author `docs/policy.md` — the end-user guide for the policy DSL": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515709
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283570963
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284368237
+      }
+    ],
+    "14.2 Author three Mintlify MDX pages under `docs-site/policy/` and update `docs-site/docs.json`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515786
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283572101
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284369379
+      }
+    ],
+    "14.3 Update `CHANGELOG.md` with the Phase 3 section": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515874
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283573241
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284370371
+      }
+    ],
+    "14.4 Extend `README.md`'s \"What Trikon does today\" section": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279515945
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283574389
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284371469
+      }
+    ],
+    "15.1 Extend `pyproject.toml` coverage config": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279516032
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284383732
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284739028
+      }
+    ],
+    "15.2 Achieve `mypy --strict trikon/policy/ trikon/audit_log/` cleanliness and `ruff check` / `ruff format --check` cleanliness": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279516124
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284384876
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284740139
+      }
+    ],
+    "15.3 Update `.github/workflows/ci.yml` to include the new paths and register the perf/integration jobs": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279516213
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284392629
+      },
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284741042
+      }
+    ],
+    "1. Establish the `PolicyEvaluationError` hierarchy under `trikon/policy/`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279990766
+      }
+    ],
+    "2. Widen `Decision`, add `Verdict.warnings`, bump `schema_version` in `trikon/evidence/report.py`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279991854
+      }
+    ],
+    "3. Ship the packaged `default_policy.yaml` inside the wheel": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279993112
+      }
+    ],
+    "4. Land the `audit_log` SQLite schema and wire it into the state-DB open path": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789279993919
+      }
+    ],
+    "5. Implement `_rule_matches` — inline dispatcher, condition helpers, shape guards": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281300633
+      }
+    ],
+    "6. Implement `load_policy` and `default_policy` in `trikon/policy/loader.py`": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281301663
+      }
+    ],
+    "8. Implement `record_verdict` — the append-only audit-log writer": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281302941
+      }
+    ],
+    "9. Implement `format_markdown` — the full 7-block GitHub-flavored layout": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281304034
+      }
+    ],
+    "7. Extend `evaluate_policy` with warn accumulation and preserve first-match-terminal semantics": [
+      {
+        "executionId": "537826e9-5c2f-4798-802c-aeefce35dcd7",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789281425685
+      }
+    ],
+    "10. Wire the SDK — `sdk.verify` runs the full pipeline and persists an audit row on every return path": [
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283569193
+      }
+    ],
+    "11. Wire the CLI — `trikon verify` and `trikon init`, and preserve `trikon debug verify`": [
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789283569901
+      }
+    ],
+    "14. Documentation — end-user guide, MDX pages, CHANGELOG, README": [
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284371552
+      }
+    ],
+    "15. Coverage and lint gates — enforce 85 % branch coverage and mypy-strict cleanliness": [
+      {
+        "executionId": "a2e4e26b-8fb5-406a-b7e8-4f924880a33b",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1789284741187
+      }
+    ]
+  }
+}

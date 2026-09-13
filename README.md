@@ -11,6 +11,12 @@ Autonomous AI agents (Claude Code, Codex, Cursor, Unideploy autopilot, custom ni
 3. Produces a machine-readable **Verdict** — `ALLOW`, `BLOCK`, or `REQUIRE_HUMAN` — with structured evidence.
 4. Records the verdict in a **hash-chained audit log** for compliance.
 
+## Install
+
+    pip install trikon
+
+Trikon requires Python 3.11+ and (optionally) Docker Desktop for the sandboxed verification backend. Verify your environment with `trikon doctor`.
+
 ## Why this exists
 
 The bottleneck in software engineering has moved from writing code to verifying it. Human review does not scale with agent output. Human review is also the wrong tool for unattended agents that run at 3 a.m.
@@ -47,6 +53,11 @@ Pre-alpha. Phase 1 (change intelligence) is implemented end-to-end; the verifica
 - **Change-intelligence pipeline** — `parse_diff` → AST indexer → symbol resolver → dep graph → `compute_impact`, producing a structured `ImpactSet` (impacted files, symbols, modules, public APIs, tests, blast-radius score). Frozen contract in [`.kiro/specs/change-intelligence/design.md`](./.kiro/specs/change-intelligence/design.md).
 - **CLI: `trikon debug impact`** — runs the whole pipeline against a git repo and prints the `ImpactSet` as JSON. The first end-to-end runnable checkpoint.
 - **Never-fail-open guarantee** — every exception raised inside `trikon/change_intel/**` is a subclass of `ChangeIntelError`. The SDK boundary catches the base class and returns a `Verdict` with `decision="require_human"` and `blast_radius_score="HIGH"`. `allow` is never emitted on an error path. See [`docs/change_intel.md`](./docs/change_intel.md#never-fail-open).
+- **Verification (Phase 2)** — the same pipeline now *executes* the `ImpactSet`. Targeted `pytest` runs, static analysis (`ruff` + `mypy`), and custom `.trikon/checks/*.py` plugins all run inside a pinned, network-isolated Docker sandbox (`trikon/sandbox:0.1.0`). Every raise site under `trikon/verify/**` is a `VerificationRunnerError` subclass, so sandbox failures still land on `require_human` — the never-fail-open guarantee extends to Phase 2. Full walkthrough in [`docs/verification.md`](./docs/verification.md). One-line demo:
+
+  ```bash
+  trikon debug verify --repo examples/sample_repo --base HEAD~1 --head HEAD
+  ```
 
 Try it locally:
 
@@ -55,7 +66,27 @@ pip install -e ".[dev]"
 trikon debug impact --repo examples/sample_repo --base HEAD --head HEAD
 ```
 
+For the Phase 2 verification runner, the warm path (CoverageMap-hit, sub-15 s verdicts) requires a one-time coverage-map build per repo before the first `trikon debug verify` invocation:
+
+```bash
+# 1. Build the coverage map (one-time setup per repo)
+trikon coverage build --repo .
+
+# 2. Run verification on a change
+trikon debug verify --repo . --base HEAD~1 --head HEAD
+```
+
+See [`docs/verification.md`](./docs/verification.md) for the full verification pipeline (sandbox, test selection, static checks, plugins).
+
 Phase 2 (targeted test execution + sandbox) and Phase 3 (policy engine + `trikon verify`) are next. Until they land, `sdk.verify()` returns `require_human` because there is no verification evidence to grade yet.
+
+## MCP integration
+
+Trikon exposes a `trikon_verify` MCP tool that any MCP-capable AI agent (Claude Code, Cursor, Kiro) can call:
+
+    trikon mcp serve --transport stdio
+
+See [docs/mcp-integration.md](docs/mcp-integration.md) for per-editor configs.
 
 ## Documentation
 
@@ -68,6 +99,7 @@ Phase 2 (targeted test execution + sandbox) and Phase 3 (policy engine + `trikon
 | [`docs/quickstart.md`](./docs/quickstart.md) | Get running locally. |
 | [`docs/worked_example.md`](./docs/worked_example.md) | End-to-end scenario with numbers. |
 | [`docs/change_intel.md`](./docs/change_intel.md) | Engineer's walkthrough of the Phase 1 change-intelligence pipeline. |
+| [`docs/verification.md`](./docs/verification.md) | Engineer's walkthrough of the Phase 2 verification runner (sandbox, test selection, static checks, plugins). |
 | [`docs-site/`](./docs-site) | Mintlify docs site (end-user facing). |
 
 ## Immediate next steps

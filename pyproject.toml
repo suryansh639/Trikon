@@ -1,6 +1,6 @@
 [project]
 name = "trikon"
-version = "0.0.1"
+version = "0.3.0"
 description = "Verification layer for autonomous AI coding agents. Blast radius + targeted tests + policy engine + structured verdicts."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,8 +38,10 @@ dependencies = [
     "typer>=0.14",
     "rich>=13.9",
     "gitpython>=3.1",
-    # MCP server integration
-    # "mcp>=1.0",           # uncomment when integrations are wired
+    # Verification runner — Docker sandbox client (Phase 2)
+    "docker>=7,<8",
+    # MCP server integration (trikon mcp serve)
+    "mcp>=2,<3",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +66,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["trikon"]
 
+# Ship the packaged default policy inside the wheel. Without this,
+# `importlib.resources.files("trikon.policy") / "default_policy.yaml"`
+# raises FileNotFoundError on `pip install trikon` even though it works
+# in a source checkout.
+[tool.hatch.build.targets.wheel.force-include]
+"trikon/policy/default_policy.yaml" = "trikon/policy/default_policy.yaml"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -87,12 +96,15 @@ disallow_any_explicit = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["jedi.*", "libcst.*", "unidiff.*", "git.*"]
+module = ["coverage.*", "docker.*", "git.*", "jedi.*", "libcst.*", "unidiff.*", "yaml.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
 branch = true
-source = ["trikon"]
+# `trikon` already covers all submodules; `trikon.verify` is listed
+# explicitly so a bare `coverage run` in Phase 2 unambiguously instruments
+# the sandbox layer alongside change_intel.
+source = ["trikon", "trikon.verify"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -100,12 +112,21 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+# Phase 2 gate — matches `design.md §13.5`
+# (`coverage report --fail-under=85 --include='trikon/verify/*'`).
+# Phase 1's change_intel gate is enforced at the CLI in ci.yml with
+# `coverage report --fail-under=90 --include='trikon/change_intel/*'`;
+# both CLI flags override these file defaults, so the 90 % floor on
+# `trikon/change_intel/**` is preserved exactly.
+include = ["trikon/verify/*"]
+fail_under = 85
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m 'not perf and not integration'"
 markers = [
     "integration: end-to-end tests requiring git / docker / sample_repo",
     "slow: benchmarks and long-running tests",
+    "perf: nightly perf benchmarks; opt-in",
 ]

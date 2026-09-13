@@ -1,0 +1,198 @@
+---
+title: "Policy Troubleshooting"
+description: "Diagnosing the common failure modes of the Phase 3 policy engine — malformed YAML, unknown condition keys, broken wheel, audit-log disk-full, and trikon verify exit codes."
+---
+
+Every failure mode below shows the diagnostic you will see on the [Verdict](/concepts/verdicts) or in `trikon verify` output, and the fix. When a policy error escapes the engine, the SDK returns `require_human` — never `allow`. That is the [never-fail-open](/policy/overview#never-fail-open) contract; troubleshooting only aims to turn a `require_human` back into a productive verdict.
+
+## Malformed policy YAML
+
+**Symptom.** `PolicyLoadError` on the verdict; message names the offending file and the underlying YAML parser error:
+
+```
+PolicyLoadError: /workspace/repo/.trikon/policy.yaml is not valid YAML
+```
+
+The `__cause__` chain carries the original `yaml.YAMLError` — usually a `yaml.scanner.ScannerError` naming the exact line and column.
+
+**Cause.** One of:
+
+- Unbalanced quotes (`reason: "unterminated`).
+- Tabs mixed with spaces at the beginning of a line — YAML forbids leading tabs.
+- A key without a value at end-of-file (`then:` on the last line).
+- A stray control character pasted from a rich-text source.
+
+**Fix.**
+
+<CodeGroup>
+```bash Validate the YAML directly
+python -c "import yaml, sys; yaml.safe_load(open('.trikon/policy.yaml'))" \
+  && echo OK
+```
+```bash Reset to the packaged default
+trikon init --force
+```
+</CodeGroup>
+
+The `python -c` invocation prints the raw parser error including the line and column of the first problem. Fix that line, re-run `trikon verify`.
+
+## Unknown condition key
+
+**Symptom.** `RuleMatchError` on the verdict; message names the offending key and the rule it appeared in:
+
+```
+RuleMatchError: unknown condition key: 'actor.agent_id' in rule 'gate on gpt-5'
+```
+
+**Cause.** The rule's `when:` clause references a key the evaluator does not recognize. The five accepted keys are enumerated in [policy authoring](/policy/authoring#the-five-condition-types):
+
+- `any_path_matches`
+- `no_path_matches`
+- `change.blast_radius.score`
+- `verification.tests.status`
+- `verification.static.new_errors`
+
+Anything else — `actor.agent_id`, `time_of_day`, a typo like `verification.test.status` (singular `test`) — raises `RuleMatchError`. This is a policy-authoring error, not a data error. The evaluator refuses to silently ignore an unrecognized key because that would make policy behavior depend on runtime state the author cannot see.
+
+**Fix.** Correct the key, or remove the rule. If you need a condition that Trikon does not yet ship — actor identity, time of day, day of week — track [design.md §18 out-of-scope](https://github.com/suryansh639/Trikon/blob/main/.kiro/specs/policy-engine/design.md) or open an issue naming the condition and the rule shape you want.
+
+Malformed `verification.static.new_errors` operator dicts also surface as `RuleMatchError`:
+
+```yaml
+verification.static.new_errors:
+  eq: 0
+  gt: 5          # multi-key rejected: "expects exactly one operator"
+
+verification.static.new_errors:
+  neq: 0         # unknown operator rejected
+
+verification.static.new_errors:
+  eq: "zero"     # non-int threshold rejected
+```
+
+## Broken wheel — missing packaged default
+
+**Symptom.** `PolicyLoadError` even when `.trikon/policy.yaml` does not exist in the repo:
+
+```
+PolicyLoadError: packaged default_policy.yaml not found
+```
+
+Or:
+
+```
+PolicyLoadError: packaged default_policy.yaml is malformed
+```
+
+The `__cause__` chain carries `ModuleNotFoundError`, `FileNotFoundError`, `OSError`, `yaml.YAMLError`, or `pydantic.ValidationError`.
+
+**Cause.** The wheel was built without `trikon/policy/default_policy.yaml` bundled as a package resource. This can happen when:
+
+- A custom build backend override strips non-Python files.
+- `pip install -e .` was run against a source tree missing the file.
+- The file was deleted from `trikon/policy/` after install but before use.
+
+**Fix.** Reinstall from a known-good wheel:
+
+```bash
+pip install --force-reinstall --no-cache-dir trikon
+```
+
+If the failure persists, verify the resource is present:
+
+```bash
+python -c "from importlib import resources; print(resources.files('trikon.policy') / 'default_policy.yaml')"
+python -c "from trikon.policy.loader import default_policy; print(default_policy().rules[0].name)"
+```
+
+The first command prints the resolved path; the second exercises the same loader `sdk.verify` uses. Both should succeed on a correctly-built install. When they do not, the wheel is broken — file an issue against Trikon with the output of `pip show trikon` and `python -m pip debug --verbose`.
+
+## Audit-log disk full
+
+**Symptom.** `AuditLogError` on the verdict, propagated all the way to the CLI:
+
+```
+AuditLogError: audit_log INSERT failed
+```
+
+The `__cause__` chain carries `sqlite3.OperationalError` with a message such as `database or disk is full`.
+
+**Cause.** SQLite refused to append a row to `audit_log` in `.trikon/state.db`. Common triggers:
+
+- The filesystem is full. Common on ephemeral CI runners with a small `/tmp`.
+- The filesystem is read-only (some hardened container runtimes).
+- `.trikon/state.db` was opened with a schema older than `audit_log`. This should be repaired by `ensure_audit_tables` at connect time, but a mid-run truncation of the file can leave it in a broken state.
+
+Unlike a policy-load or rule-match error, an audit-write failure is a hard failure. `sdk.verify` re-raises `AuditLogError` rather than swallowing it — a Verdict without an audit trail SHALL NOT be silently returned. `trikon verify` surfaces the error and exits with the environment-error code (`3+`) rather than a decision-based code.
+
+**Fix.**
+
+<CodeGroup>
+```bash Free space on the runner
+df -h .trikon
+rm -rf /tmp/*.log
+# then re-run
+trikon verify --base main --head HEAD
+```
+```bash Rebuild the state DB
+rm .trikon/state.db
+trikon coverage build --repo .
+```
+</CodeGroup>
+
+Deleting `.trikon/state.db` loses cached baselines and the coverage map — `trikon coverage build` reconstitutes them. The `audit_log` table itself is recreated by `ensure_audit_tables` on the next connection. Historic audit rows are permanently lost by this reset; if you need to preserve them, copy the file before deletion.
+
+## `trikon verify` exit codes
+
+`trikon verify` maps the Verdict's `decision` to a process exit code. This is what your CI should key on.
+
+| Exit code | Meaning | CI action |
+| --- | --- | --- |
+| `0` | `decision == "allow"` | Merge / land / auto-approve. |
+| `1` | `decision == "block"` | Fail the check. Do not merge. |
+| `2` | `decision == "require_human"` | Do not auto-merge. Route to human review. |
+| `3+` | Environment / setup error | Investigate. Not a policy outcome. |
+
+Exit codes `0`, `1`, and `2` are stable across the [never-fail-open](/policy/overview#never-fail-open) contract. Any internal error inside `sdk.verify` produces a fail-closed Verdict with `decision == "require_human"` and exit code `2` — the process still exits cleanly with a decision-based code, and the fail-closed Verdict still lands in `audit_log`.
+
+Exit codes `3+` are reserved for environment failures that prevent `sdk.verify` from returning a Verdict at all — usually one of:
+
+- Docker daemon unreachable (see [verification troubleshooting](/verification/troubleshooting#docker-daemon-unreachable)).
+- `AuditLogError` on the audit write path (disk full — this section).
+- Invalid CLI arguments, unreachable base/head SHA, unreadable repo path.
+
+CI configuration snippet that keys on the three decision-based codes:
+
+```yaml
+- name: Trikon
+  run: trikon verify --base ${{ github.event.pull_request.base.sha }} --head HEAD
+  continue-on-error: false          # exit 1 fails the check
+  # exit 2 also fails by default; use a separate gate if you want to
+  # allow require_human to pass the check while still tagging for review.
+```
+
+## Getting more diagnostic detail
+
+`trikon verify --output json` emits the full Verdict including every `RuleResult` in `evidence.policy_results`. That is the fastest way to see which rules matched, which did not, and what each rule would have emitted.
+
+```bash
+trikon verify --base main --head HEAD --output json > /tmp/verdict.json
+jq '.evidence.policy_results[] | {rule: .rule_name, matched: .matched, would_emit: .would_emit}' /tmp/verdict.json
+```
+
+`trikon debug verify` remains the developer diagnostic surface — it renders the Phase-2 human-readable summary and always exits `0` regardless of the decision. Use it for local iteration when you want to see verification output without CI failing on `block`.
+
+When filing an issue against Trikon, attach:
+
+- The full JSON Verdict from `trikon verify --output json`.
+- The offending `.trikon/policy.yaml` (or a redacted equivalent).
+- The output of `trikon version` and `pip show trikon`.
+
+## Related
+
+- [Overview](/policy/overview) — the three invariants and the pipeline
+- [Policy authoring](/policy/authoring) — the DSL reference every rule conforms to
+- [Verdicts](/concepts/verdicts) — the object every diagnostic here lands on
+- [Verification troubleshooting](/verification/troubleshooting) — sandbox and coverage-map failures from Phase 2
+- [`trikon verify`](/cli/verify) — the full-pipeline CLI wrapper
+- [`trikon init`](/cli/init) — scaffold `.trikon/policy.yaml` from the packaged default

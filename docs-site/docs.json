@@ -65,6 +65,14 @@
             ]
           },
           {
+            "group": "Verification",
+            "pages": [
+              "verification/overview",
+              "verification/plugin-authoring",
+              "verification/troubleshooting"
+            ]
+          },
+          {
             "group": "Integrations",
             "pages": [
               "integrations/mcp",

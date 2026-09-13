@@ -33,6 +33,11 @@ env/
 # helper scripts (never commit)
 _*.sh
 _*.py
+# ...but __init__.py files are package markers, not helper scripts.
+# Without this exception, hatchling's VCS-aware file discovery excludes
+# every `__init__.py` from the wheel (because `_*.py` matches
+# `__init__.py`) and `pip install trikon` yields a broken import graph.
+!**/__init__.py
 
 # Subagent artifacts (semantic reviews, task-execution transcripts)
 semantic-review/
