@@ -30,6 +30,20 @@ dependents: ``no_python_change`` (no Python edits, short-circuits before
 dep-graph traversal) and ``clean_refactor`` (transitively closed inside a
 single module).
 
+Policy decisions per scenario
+-----------------------------
+
+The verification runner and policy engine are live end-to-end from v0.3.0
+onward. Each scenario now produces a scenario-specific decision from the
+pipeline; the map is captured in
+:data:`_EXPECTED_DECISION_PER_SCENARIO` and asserted alongside the
+ImpactSet shape. Prior to v0.3.3 (which fixed the Docker sandbox
+``/workspace/tmp`` / ``/home/trikon`` tmpfs issues), every scenario
+collapsed to ``require_human`` because the sandbox failed before the
+policy engine could run — that is what the previous universal
+``assert verdict.decision == "require_human"`` was really checking, and
+it stopped being true once the sandbox works.
+
 Validates: Requirements 1.1, 5.1, 5.2, 5.3.
 """
 
@@ -114,6 +128,24 @@ SCENARIOS: tuple[str, ...] = (
     "no_python_change",
     "deleted_file",
 )
+
+#: The verdict decision each scenario is expected to produce, as of v0.3.3
+#: (Docker sandbox fixed, verification runner + policy engine live).
+#:
+#: - ``no_python_change`` → ``"allow"``: no Python edits ⇒ no static findings,
+#:   LOW blast radius, clean auto-allow.
+#: - ``clean_refactor`` / ``bad_retry`` / ``sensitive_touch`` →
+#:   ``"require_human"``: sensitive-path touches or MEDIUM+ blast radius
+#:   trigger the default rule.
+#: - ``deleted_file`` → ``"block"``: dangling references to the deleted file
+#:   produce real ruff findings.
+_EXPECTED_DECISION_PER_SCENARIO: dict[str, str] = {
+    "clean_refactor": "require_human",
+    "bad_retry": "require_human",
+    "sensitive_touch": "require_human",
+    "no_python_change": "allow",
+    "deleted_file": "block",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -316,10 +348,16 @@ def test_scenario(scenario: str, tmp_path: Path) -> None:
         cache_db=cache_db,
     )
 
-    # Every successful Phase-1 run is a ``require_human`` verdict — the
-    # verification runner and policy engine are stubbed. This is not part of
-    # the per-scenario story so it lives in the shared preamble.
-    assert verdict.decision == "require_human"
+    # Every successful run must produce a valid decision. Which decision the
+    # policy engine returns is scenario-specific (Phase 3 makes the choice
+    # real — cf. this file's history where the Phase-1 stub always emitted
+    # ``require_human``) and is asserted below per scenario. The four legal
+    # decisions come from :data:`trikon.evidence.report.Decision`.
+    assert verdict.decision in {"allow", "block", "require_human", "warn"}
+
+    assert verdict.decision == _EXPECTED_DECISION_PER_SCENARIO[scenario], (
+        f"scenario={scenario!r}: policy decision drifted from expected"
+    )
 
     actual = _canonicalize_impact(_impact_json(verdict.evidence.change))
     expected = _canonicalize_impact(_load_expected(scenario))
