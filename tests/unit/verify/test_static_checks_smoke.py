@@ -108,10 +108,7 @@ def test_parse_mypy_text_returns_expected_shape() -> None:
             "path": "src/api/payments.py",
             "line": 42,
             "rule_id": "arg-type",
-            "message": (
-                'Argument 1 to "process" has incompatible type "str"; '
-                'expected "int"'
-            ),
+            "message": ('Argument 1 to "process" has incompatible type "str"; expected "int"'),
             "severity": "error",
         },
         {

@@ -112,14 +112,14 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
-# Phase 2 gate — matches `design.md §13.5`
-# (`coverage report --fail-under=85 --include='trikon/verify/*'`).
-# Phase 1's change_intel gate is enforced at the CLI in ci.yml with
-# `coverage report --fail-under=90 --include='trikon/change_intel/*'`;
-# both CLI flags override these file defaults, so the 90 % floor on
-# `trikon/change_intel/**` is preserved exactly.
-include = ["trikon/verify/*"]
-fail_under = 85
+# NOTE: `include` and `fail_under` are set per-invocation on the CLI
+# (see `.github/workflows/ci.yml`):
+#   Phase 1: `coverage report --fail-under=90 --include='trikon/change_intel/*'`
+#   Phase 2: `coverage report --fail-under=85 --include='trikon/verify/*'`
+# Baking either flag into this shared config caused pytest-cov to
+# apply the wrong filter to the wrong phase's tests and report 0.00%
+# coverage, failing the pytest step before the explicit `coverage report`
+# CLI could run. Leave both flags at the CLI where they belong.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
