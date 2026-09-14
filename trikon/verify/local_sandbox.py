@@ -233,6 +233,28 @@ class LocalSubprocessSandbox:
                 "LocalSubprocessSandbox.exec called outside of an active context manager"
             )
 
+        # Strip sandbox-only ``--cache-dir=`` flags before host-side
+        # invocation — mirror of the strip in
+        # ``trikon.verify.static_checks._run_baseline_tool_on_host``
+        # (v0.3.3 Bug F fix, which pinned
+        # ``--cache-dir=/workspace/tmp/.<tool>_cache`` in
+        # ``DEFAULT_STATIC_TOOLS`` so ruff and mypy could write their
+        # caches to the sandbox's writable tmpfs while the repo
+        # bind-mount stayed read-only inside the container). The
+        # ``/workspace/tmp`` prefix only exists inside the Docker
+        # sandbox; on any host filesystem it does not exist, and on
+        # Windows it is not even a valid path. Without this strip ruff
+        # and mypy fail cache init on the missing host path, produce
+        # empty output, and ``--no-sandbox`` static findings silently
+        # collapse to ``[]`` while the Docker path returns real findings
+        # on the same diff. Letting the host tool fall back to its
+        # default cache location (adjacent to the worktree, or the
+        # user's platform cache dir) is correct — the worktree is
+        # short-lived and torn down immediately after the tool exits.
+        # See ``DEFAULT_STATIC_TOOLS`` in :mod:`trikon.verify.models`
+        # for the sandbox-side pin.
+        argv = tuple(t for t in argv if not t.startswith("--cache-dir="))
+
         resolved_workdir = self._resolve_workdir(workdir)
 
         merged_env: dict[str, str] = os.environ.copy()
