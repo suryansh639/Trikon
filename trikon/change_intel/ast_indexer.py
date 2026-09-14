@@ -143,7 +143,7 @@ def _visit_module_level(
     intentionally not traversed — nested functions and lambdas are excluded
     per ``design.md §2.2``.
     """
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         symbols.append(
             _make_symbol(
                 node,
@@ -214,7 +214,7 @@ def _visit_class_body(
     resolve the full dotted path.
     """
     for node in class_node.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             symbols.append(
                 _make_symbol(
                     node,
