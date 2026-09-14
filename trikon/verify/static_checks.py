@@ -37,6 +37,46 @@ This is the sole gate. Downstream code (:func:`_expand_argv`,
 ``sandbox.exec``, ``subprocess.run``) trusts that every path it sees
 has a suffix the tool can parse.
 
+Head-existence filter
+---------------------
+
+Companion to the suffix filter, added in v0.3.4. After the suffix
+filter has pruned non-Python paths, the head-side raise site inside
+:func:`run_static_checks` Step 3 pipes the survivors through
+:func:`_filter_by_head_existence` — the head-side gate that drops
+paths absent from the HEAD tree — immediately after the suffix filter
+and before :func:`_expand_argv` builds the argv tuple. The metadata
+source is :attr:`~trikon.evidence.report.ImpactSet.file_changes` (new
+on v0.3.4), a list of :class:`~trikon.evidence.report.FileChangeInfo`
+entries carrying ``path``, ``change_kind``, and ``old_path``. Any path
+whose accompanying :class:`~trikon.evidence.report.FileChangeInfo`
+entry has ``change_kind == "deleted"`` is dropped from the head-side
+argv, and so is any path that appears as ``old_path`` on a
+``change_kind == "renamed"`` entry — the rename-source path does not
+exist at HEAD, only the rename target does. This closes the ``E902``
+channel where a deleted ``.py`` used to reach the sandbox as an argv
+token and surface as a spurious ``is_new`` finding on the Docker
+backend but not on the ``--no-sandbox`` backend.
+
+When :attr:`~trikon.evidence.report.ImpactSet.file_changes` is empty
+— a pre-v0.3.4 producer that predates the new field, or an
+out-of-tree consumer that constructs
+:class:`~trikon.evidence.report.ImpactSet` without supplying it — the
+filter is a no-op: :func:`_filter_by_head_existence` returns its input
+unchanged and behavior collapses to the pre-fix code path
+(backward-compat branch, design.md §5).
+
+The baseline-side raise site inside :func:`_run_baseline_tool_on_host`
+deliberately does not apply this filter. The base worktree is
+materialized on disk before the tool runs, and the baseline path
+already gates on ``(worktree_dir / f).is_file()`` — an existence check
+against the base tree that correctly rejects any path absent from
+BASE, including added-at-HEAD paths and rename targets. The head-side
+metadata filter and the baseline-side filesystem intersection are two
+mechanisms serving the same intent on two sides of the diff; only the
+head side needs metadata, because at HEAD the tree is not on disk
+locally — the sandbox owns the mount (design.md §7).
+
 Algorithm (5 steps, design.md §7)
 ---------------------------------
 
@@ -55,12 +95,14 @@ Algorithm (5 steps, design.md §7)
    ``static_baseline``, and remove the worktree.
 
 3. **Head-side run** — for each tool, filter ``impact.changed_files``
-   through :func:`_filter_by_suffix` against ``tool.accepted_suffixes``,
-   skip cleanly if the filtered list is empty, otherwise expand the
-   ``{files}`` sentinel in ``argv_template`` with the filtered list and
-   invoke it inside the sandbox. Ruff (``parse_json=True``) emits
-   ``--output-format=json`` and flows through :func:`_parse_ruff_json`;
-   mypy (``parse_json=False``) emits line-per-diagnostic text and flows
+   through :func:`_filter_by_suffix` against ``tool.accepted_suffixes``
+   then through :func:`_filter_by_head_existence` against
+   ``impact.file_changes``, skip cleanly if the composed output is
+   empty, otherwise expand the ``{files}`` sentinel in
+   ``argv_template`` with the composed output and invoke it inside the
+   sandbox. Ruff (``parse_json=True``) emits ``--output-format=json``
+   and flows through :func:`_parse_ruff_json`; mypy
+   (``parse_json=False``) emits line-per-diagnostic text and flows
    through :func:`_parse_mypy_text`.
 
 4. **is_new diff** — each parsed head finding is keyed by
@@ -154,7 +196,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from trikon.evidence.report import ImpactSet, StaticReport
+from trikon.evidence.report import FileChangeInfo, ImpactSet, StaticReport
 from trikon.verify.errors import StaticCheckError
 from trikon.verify.models import DEFAULT_STATIC_TOOLS, StaticTool
 
@@ -348,15 +390,32 @@ def run_static_checks(
         # language-agnostic (it can carry ``uv.lock``, ``pyproject.toml``,
         # ``README.md``, images); passing non-parseable paths into ruff /
         # mypy argv produces thousands of false-positive findings
-        # (design.md §2). :func:`_filter_by_suffix` is the sole gate:
-        # downstream code (``_expand_argv``, ``sandbox.exec``) trusts
-        # every path it sees has a suffix the tool can parse. When the
-        # filtered list is empty the tool is skipped cleanly —
+        # (design.md §2). Two composed filters gate the raise site, in
+        # a fixed order (Requirement 4.2 / design.md §6):
+        #
+        #   1. :func:`_filter_by_suffix` drops any path whose suffix is
+        #      not in ``tool.accepted_suffixes`` (e.g., non-``.py`` /
+        #      ``.pyi`` entries for ruff and mypy).
+        #   2. :func:`_filter_by_head_existence` drops any path whose
+        #      matching :class:`FileChangeInfo` entry says the file
+        #      does not exist at HEAD (``change_kind == "deleted"``, or
+        #      the rename-source ``old_path`` of a ``"renamed"`` entry).
+        #      Without this filter, deleted-at-head ``.py`` paths reach
+        #      argv and ruff emits ``E902: No such file`` inside the
+        #      Docker sandbox (design.md §2, click repro).
+        #
+        # Suffix first, head-existence second: the suffix filter is
+        # dependency-free and typically shrinks the input, so the
+        # downstream head-existence scan runs on a smaller list.
+        # Downstream code (``_expand_argv``, ``sandbox.exec``) trusts
+        # every path it sees has a parseable suffix AND exists at HEAD.
+        # When the composed output is empty the tool is skipped cleanly —
         # ``tools_run.append(tool.name)`` at the top of the per-tool
         # loop already recorded the tool ran, so ``continue`` here
         # satisfies Requirement 3.3 (skip records into ``tools_run``,
         # appends no findings, increments no counters).
         filtered = _filter_by_suffix(impact.changed_files, tool.accepted_suffixes)
+        filtered = _filter_by_head_existence(filtered, impact.file_changes)
         if not filtered:
             continue
         argv = _expand_argv(tool.argv_template, filtered)
@@ -868,6 +927,74 @@ def _filter_by_suffix(
     if not accepted_suffixes:
         return ()
     return tuple(p for p in paths if PurePosixPath(p).suffix in accepted_suffixes)
+
+
+# ---------------------------------------------------------------------------
+# Head-existence filter
+# ---------------------------------------------------------------------------
+
+
+def _filter_by_head_existence(
+    paths: Sequence[str],
+    file_changes: Sequence[FileChangeInfo],
+) -> tuple[str, ...]:
+    """Return the subsequence of ``paths`` that exist in the HEAD tree.
+
+    A path is dropped from the output when the accompanying
+    ``file_changes`` list contains an entry describing it as absent
+    from HEAD. Two cases are dropped:
+
+    1. ``change_kind == "deleted"`` — the file was deleted between
+       BASE and HEAD; it does not exist in the HEAD checkout / head
+       bind-mount, so passing it as an argv token to ruff / mypy
+       produces ``E902: No such file`` on the Docker sandbox path.
+    2. ``change_kind == "renamed"`` and ``old_path == p`` — the
+       rename-source path does not exist at HEAD (only the rename
+       target does). ``impact.changed_files`` today does not emit
+       rename-source paths, so this branch fires only defensively;
+       it exists so a future change that starts emitting them cannot
+       reintroduce the E902.
+
+    Empty-``file_changes`` semantics
+    --------------------------------
+    When ``file_changes`` is empty, the filter is a no-op — it returns
+    ``tuple(paths)`` unchanged. This is the backward-compatibility
+    branch: an out-of-tree consumer that constructs ``ImpactSet``
+    without supplying ``file_changes`` (Requirement 1.7) or a
+    deserialized JSON payload lacking the ``file_changes`` key
+    (Requirement 1.8) falls into this branch and behaves exactly like
+    the pre-fix code path. In-tree the branch is unreachable — the
+    blast-radius orchestrator always populates ``file_changes``
+    (Requirement 2.1, 2.7).
+
+    Args:
+        paths: The file paths to filter. Order is preserved in the
+            output (the output is a subsequence of ``paths``). The
+            input sequence is not mutated.
+        file_changes: The per-file change metadata carried on
+            :attr:`ImpactSet.file_changes`. An entry with ``path == p,
+            change_kind == "deleted"`` causes ``p`` to be dropped;
+            an entry with ``change_kind == "renamed", old_path == p``
+            also causes ``p`` to be dropped.
+
+    Returns:
+        A tuple whose elements are a subsequence of ``paths`` in
+        original order, containing exactly those paths that are not
+        classified as deleted-at-head or rename-source. Pure function:
+        same inputs produce the same output, no I/O, no mutation of
+        arguments.
+    """
+    if not file_changes:
+        return tuple(paths)
+
+    dropped: set[str] = set()
+    for info in file_changes:
+        if info.change_kind == "deleted":
+            dropped.add(info.path)
+        elif info.change_kind == "renamed" and info.old_path is not None:
+            dropped.add(info.old_path)
+
+    return tuple(p for p in paths if p not in dropped)
 
 
 # ---------------------------------------------------------------------------

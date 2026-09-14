@@ -164,7 +164,7 @@ def run_verification(
     *,
     policy: Policy | None = None,
     deadline_seconds: float = 300.0,
-    sandbox_image: str = "suryansh639/trikon:0.3.3",
+    sandbox_image: str = "suryansh639/trikon:0.3.4",
     state_db: Path | None = None,
     now: datetime | None = None,
     base_sha: str | None = None,
@@ -206,7 +206,7 @@ def run_verification(
             ``design.md §9.1``).
         sandbox_image: Docker image tag. Overridable for tests only;
             production callers always take the default of
-            ``suryansh639/trikon:0.3.3`` (``design.md §5.1``).
+            ``suryansh639/trikon:0.3.4`` (``design.md §5.1``).
         state_db: SQLite state database path. Defaults to
             ``repo_path / ".trikon" / "state.db"`` — the same file
             Phase 1 uses. Its parent directory is created on demand so

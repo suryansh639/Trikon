@@ -38,6 +38,17 @@ Decision = Literal["allow", "block", "require_human", "warn"]
 PolicyDecision = Decision  # documented alias; identical Literal.
 BlastBucket = Literal["LOW", "MEDIUM", "HIGH"]
 
+# Mirror of :data:`trikon.change_intel.models.ChangeKind`. Deliberately
+# duplicated here rather than imported: ``trikon.evidence.report`` is the
+# SDK's public boundary and must not depend on ``trikon.change_intel.*``,
+# which is an internal producer (design.md §9). The literal values are
+# pinned in Requirement 1.4; if the internal ``ChangeKind`` ever grows a
+# fifth value, the two literals will diverge and the plumbing site
+# (:func:`trikon.change_intel.blast_radius._public_file_changes_sorted`)
+# will fail mypy ``--strict`` — that divergence is the intended forcing
+# function for the public-boundary contract.
+ChangeKind = Literal["added", "modified", "deleted", "renamed"]
+
 
 class SymbolRef(BaseModel):
     """A fully-qualified reference to a code symbol."""
@@ -45,6 +56,37 @@ class SymbolRef(BaseModel):
     qualified_name: str
     file_path: str
     kind: Literal["function", "class", "method", "assignment"]
+
+
+class FileChangeInfo(BaseModel):
+    """Per-file change metadata carried on :class:`ImpactSet`.
+
+    Mirrors the internal :class:`trikon.change_intel.models.FileChange` on the
+    fields the public boundary needs — ``path``, ``change_kind``, ``old_path``
+    — and deliberately omits ``hunks`` (the unified-diff line-index sets),
+    which are an internal-only detail of the change-intel pipeline and would
+    inflate every ``ImpactSet`` JSON payload without carrying value at the SDK
+    boundary (design.md §3).
+
+    Field semantics
+    ---------------
+    ``path``: POSIX-relative path, same value as the internal
+    ``FileChange.path``. For an added file this is the new path; for a
+    modified file the unchanged path; for a deleted file the pre-deletion path
+    (the file does not exist at HEAD); for a renamed file the post-rename
+    path.
+
+    ``change_kind``: One of the four :data:`ChangeKind` literals.
+
+    ``old_path``: The pre-rename path when ``change_kind == "renamed"``,
+    ``None`` for every other value of ``change_kind``. Callers that want to
+    know "did this rename move a file from X to Y" read
+    ``(old_path, path)`` when ``change_kind == "renamed"``.
+    """
+
+    path: str
+    change_kind: ChangeKind
+    old_path: str | None = None
 
 
 class ImpactSet(BaseModel):
@@ -57,6 +99,11 @@ class ImpactSet(BaseModel):
     impacted_tests: list[str]
     blast_radius_score: BlastBucket
     blast_radius_numeric: float
+    # Additive field (design.md §3). Defaults to ``[]`` so every existing
+    # constructor and every existing JSON fixture keeps working; an empty
+    # list is the "no metadata supplied" signal for consumers (backward-
+    # compat with a pre-v0.3.4 producer, Requirement 1.7 / 1.8).
+    file_changes: list[FileChangeInfo] = Field(default_factory=list)
 
 
 class TestResult(BaseModel):
@@ -198,6 +245,11 @@ EMPTY_IMPACT_SET: ImpactSet = ImpactSet(
     impacted_tests=[],
     blast_radius_score="HIGH",
     blast_radius_numeric=0.0,
+    # Redundant with the field default, but written explicitly so the
+    # sentinel documents the fail-closed shape by example — every field
+    # is listed, every default is confirmed at the construction site
+    # (Requirement 8.2, design.md §3).
+    file_changes=[],
 )
 
 

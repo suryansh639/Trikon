@@ -200,6 +200,20 @@ def _stage_shim(sandbox: LocalDockerSandbox) -> None:
     negligible cost. Using ``base64`` avoids every shell-quoting corner
     case a naive ``cat > file`` heredoc would introduce.
 
+    Packaging invariant
+    -------------------
+
+    ``_plugin_shim.py`` lives at ``trikon/verify/_plugin_shim.py`` in the
+    installed wheel. The underscore prefix marks it as module-private, but
+    the `_*.py` rule in ``.gitignore`` would drop it from the wheel unless a
+    matching negation line exempts it (see ``.gitignore``:
+    ``!trikon/verify/_plugin_shim.py``). If a future edit to ``.gitignore``
+    removes the negation, the wheel-time build will silently drop the shim
+    and every call to ``_stage_shim`` will raise :class:`PluginLoadError`
+    under ``pip install trikon``. The negation line, this paragraph, and the
+    integration test at ``tests/integration/verify/test_wheel_ships_shim.py``
+    are the three anchors that keep the packaging correct.
+
     Raises:
         PluginLoadError: If ``mkdir -p`` on the tmpfs directory fails or
             if the ``python -c`` write inside the sandbox reports a

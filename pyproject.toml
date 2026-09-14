@@ -1,6 +1,6 @@
 [project]
 name = "trikon"
-version = "0.3.3"
+version = "0.3.4"
 description = "Verification layer for autonomous AI coding agents. Blast radius + targeted tests + policy engine + structured verdicts."
 readme = "README.md"
 requires-python = ">=3.11"

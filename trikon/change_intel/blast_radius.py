@@ -54,7 +54,7 @@ from trikon.change_intel.models import (
     FileChange,
     SymbolDef,
 )
-from trikon.evidence.report import BlastBucket, ImpactSet, SymbolRef
+from trikon.evidence.report import BlastBucket, FileChangeInfo, ImpactSet, SymbolRef
 
 
 @dataclass(frozen=True)
@@ -302,6 +302,7 @@ def _compute_impact_inner(
         impacted_tests=impacted_tests,
         blast_radius_score=bucket(score, weights=weights),
         blast_radius_numeric=score,
+        file_changes=_public_file_changes_sorted(change_set.files),
     )
 
 
@@ -324,6 +325,7 @@ def _empty_python_impact(change_set: ChangeSet, *, weights: BlastWeights) -> Imp
         impacted_tests=[],
         blast_radius_score=bucket(score, weights=weights),
         blast_radius_numeric=score,
+        file_changes=_public_file_changes_sorted(change_set.files),
     )
 
 
@@ -644,6 +646,35 @@ def _compute_score(
 # ---------------------------------------------------------------------------
 # Public-boundary translation
 # ---------------------------------------------------------------------------
+
+
+def _public_file_changes_sorted(
+    files: tuple[FileChange, ...],
+) -> list[FileChangeInfo]:
+    """Translate ``ChangeSet.files`` into the public :class:`FileChangeInfo` list.
+
+    Deterministic ordering: sorted by ``path`` POSIX-lexicographic ascending,
+    matching the ordering used for :attr:`ImpactSet.changed_files` so identical
+    inputs produce byte-identical JSON downstream.
+
+    Rename semantics: for a :class:`FileChange` with ``change_kind == "renamed"``,
+    ``FileChangeInfo.old_path`` is copied from ``FileChange.old_path``; for every
+    other value of ``change_kind``, ``FileChangeInfo.old_path`` is ``None``. The
+    internal :class:`FileChange` already respects this invariant
+    (``diff_parser._rename_source_path`` is called only on the rename branch);
+    the helper preserves it verbatim at the public boundary.
+    """
+    return sorted(
+        (
+            FileChangeInfo(
+                path=fc.path,
+                change_kind=fc.change_kind,
+                old_path=fc.old_path if fc.change_kind == "renamed" else None,
+            )
+            for fc in files
+        ),
+        key=lambda info: info.path,
+    )
 
 
 def _public_refs_sorted(symbols: list[SymbolDef], *, repo_path: Path) -> list[SymbolRef]:

@@ -38,6 +38,11 @@ _*.py
 # every `__init__.py` from the wheel (because `_*.py` matches
 # `__init__.py`) and `pip install trikon` yields a broken import graph.
 !**/__init__.py
+# The plugin loader (`trikon.verify.plugins._stage_shim`) resolves this
+# shim via `importlib.resources.files("trikon.verify") / "_plugin_shim.py"`
+# at runtime. Same hatchling-VCS-discovery mechanism as the __init__.py
+# rule above — exempt the shim explicitly so the wheel picks it up.
+!trikon/verify/_plugin_shim.py
 
 # Subagent artifacts (semantic reviews, task-execution transcripts)
 semantic-review/
