@@ -96,6 +96,7 @@ from trikon.verify.db import ensure_verify_tables
 from trikon.verify.errors import TestSelectionError, VerificationRunnerError
 from trikon.verify.plugins import load_and_run_plugins
 from trikon.verify.sandbox import Sandbox, create_sandbox
+from trikon.verify.state_migrations import maybe_migrate_verify_state
 from trikon.verify.static_checks import run_static_checks
 from trikon.verify.test_selector import select_impacted_tests
 
@@ -164,7 +165,7 @@ def run_verification(
     *,
     policy: Policy | None = None,
     deadline_seconds: float = 300.0,
-    sandbox_image: str = "suryansh639/trikon:0.3.5",
+    sandbox_image: str = "suryansh639/trikon:0.3.6",
     state_db: Path | None = None,
     now: datetime | None = None,
     base_sha: str | None = None,
@@ -206,7 +207,7 @@ def run_verification(
             ``design.md §9.1``).
         sandbox_image: Docker image tag. Overridable for tests only;
             production callers always take the default of
-            ``suryansh639/trikon:0.3.5`` (``design.md §5.1``).
+            ``suryansh639/trikon:0.3.6`` (``design.md §5.1``).
         state_db: SQLite state database path. Defaults to
             ``repo_path / ".trikon" / "state.db"`` — the same file
             Phase 1 uses. Its parent directory is created on demand so
@@ -749,7 +750,10 @@ def _open_state_db(state_db: Path) -> sqlite3.Connection:
     ``static_baseline``) into existence on a fresh state DB. The
     function is additive-only (``design.md §4.2``) and idempotent by
     construction, so callers whose DB was created by Phase 1 see no
-    behavior change.
+    behavior change. Finally,
+    :func:`trikon.verify.state_migrations.maybe_migrate_verify_state`
+    runs the Phase-2 row-level migration (v0.3.6 drop-and-stamp on any
+    marker-absent state.db; fast-path no-op otherwise).
 
     Args:
         state_db: Absolute path to the SQLite state database.
@@ -788,6 +792,18 @@ def _open_state_db(state_db: Path) -> sqlite3.Connection:
         # as :class:`TestSelectionError`; propagate unchanged but
         # ensure the partially-configured connection is released so a
         # retry gets a fresh handle.
+        conn.close()
+        raise
+
+    # v0.3.6: Phase-2 row-level migration. Drops any static_baseline
+    # rows persisted by a pre-v0.3.6 Trikon build (verify_schema_version
+    # absent from schema_meta) and stamps the marker. Idempotent on a
+    # marker-present DB — a subsequent invocation reads the marker and
+    # takes the fast path. See spec
+    # static-baseline-cache-poisoning-migration.
+    try:
+        maybe_migrate_verify_state(conn)
+    except VerificationRunnerError:
         conn.close()
         raise
 

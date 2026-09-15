@@ -34,7 +34,7 @@ and continue executing the remaining plugins").
 Security invariants
 -------------------
 * **Standard-library-only imports.** The sandbox base image
-  (``suryansh639/trikon:0.3.5``) may not have the ``trikon`` package installed
+  (``suryansh639/trikon:0.3.6``) may not have the ``trikon`` package installed
   and the shim must run against a bare ``python:3.11-slim`` layer. Everything
   the shim needs — ``importlib.util``, ``inspect``, ``json``, ``sys``,
   ``pathlib``, ``dataclasses``, ``collections.abc``, ``typing`` — is stdlib.
