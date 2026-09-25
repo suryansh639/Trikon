@@ -1,0 +1,56 @@
+# Smoke test for the Trikon Verify GitHub Action.
+#
+# Validates the action wiring — action.yml parse, Docker image pull, entrypoint
+# execution, output emission — against a fixed HEAD~1..HEAD pair on this repo.
+# The job is `continue-on-error: true` because this is a smoke test, not a
+# gate: a red smoke run tells us the action broke, but it must not block PRs
+# that touched only unrelated files.
+
+name: action-smoke-test
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need at least HEAD~1 available for the smoke pair below.
+          fetch-depth: 2
+
+      - id: shas
+        name: Resolve HEAD~1..HEAD as smoke pair
+        run: |
+          echo "base=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - id: trikon
+        name: Run Trikon Verify (local action)
+        uses: ./actions/verify
+        with:
+          base: ${{ steps.shas.outputs.base }}
+          head: ${{ steps.shas.outputs.head }}
+          # Runners rarely have Docker-in-Docker; use host-subprocess mode.
+          no-sandbox: "true"
+          # Smoke test — never fail on any decision.
+          fail-on: ""
+
+      - name: Assert action emitted a decision
+        run: |
+          decision='${{ steps.trikon.outputs.decision }}'
+          if [ -z "${decision}" ]; then
+            echo "::error::Trikon action did not emit a decision output."
+            exit 1
+          fi
+          case "${decision}" in
+            allow|block|require_human|warn)
+              echo "Smoke test OK — decision=${decision}"
+              ;;
+            *)
+              echo "::error::Unexpected decision value: ${decision}"
+              exit 1
+              ;;
+          esac

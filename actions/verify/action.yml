@@ -1,0 +1,41 @@
+name: Trikon Verify
+description: Run Trikon change-intelligence + verification against a PR diff. Produces a machine-readable Verdict.
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  base:
+    description: Base commit SHA (pre-change).
+    required: true
+  head:
+    description: Head commit SHA (post-change).
+    required: true
+  repo-path:
+    description: Path to the repo root inside the checkout. Defaults to `.` (the workflow's working directory).
+    required: false
+    default: "."
+  no-sandbox:
+    description: Run trikon in --no-sandbox mode (host subprocess, no Docker isolation). Set to "true" if the action runs on a runner without Docker-in-Docker support.
+    required: false
+    default: "false"
+  fail-on:
+    description: Comma-separated list of decisions that cause the action to exit non-zero. Default `block` — the action fails only on hard blocks. Set to `block,require_human` for stricter gating.
+    required: false
+    default: "block"
+
+outputs:
+  decision:
+    description: The Verdict's `decision` field (`allow`, `block`, `require_human`, or `warn`).
+  verdict-json:
+    description: Full Verdict as a JSON string.
+
+runs:
+  using: docker
+  image: Dockerfile
+  args:
+    - ${{ inputs.base }}
+    - ${{ inputs.head }}
+    - ${{ inputs.repo-path }}
+    - ${{ inputs.no-sandbox }}
+    - ${{ inputs.fail-on }}

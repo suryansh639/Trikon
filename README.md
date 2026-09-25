@@ -17,6 +17,19 @@ Autonomous AI agents (Claude Code, Codex, Cursor, Unideploy autopilot, custom ni
 
 Trikon requires Python 3.11+ and (optionally) Docker Desktop for the sandboxed verification backend. Verify your environment with `trikon doctor`.
 
+## GitHub Action
+
+Wire Trikon into any PR workflow with two lines. No app to install, no backend to deploy:
+
+```yaml
+- uses: suryansh639/Trikon/actions/verify@v0.4.1
+  with:
+    base: ${{ github.event.pull_request.base.sha }}
+    head: ${{ github.event.pull_request.head.sha }}
+```
+
+The action pulls the pinned Docker image [`suryansh639/trikon:0.4.1`](https://hub.docker.com/r/suryansh639/trikon), runs `trikon verify` against the diff, emits a machine-readable Verdict (`decision`, `verdict-json`), and fails the job on `block`. See [`actions/verify/README.md`](./actions/verify/README.md) for inputs, outputs, and strict-gating examples.
+
 ## Why this exists
 
 The bottleneck in software engineering has moved from writing code to verifying it. Human review does not scale with agent output. Human review is also the wrong tool for unattended agents that run at 3 a.m.

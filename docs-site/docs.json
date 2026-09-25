@@ -38,7 +38,7 @@
     "global": {
       "anchors": [
         { "anchor": "Website", "href": "https://trikon.dev", "icon": "globe" },
-        { "anchor": "Pricing", "href": "https://trikon.dev/pricing", "icon": "credit-card" },
+        { "anchor": "Pricing", "href": "https://docs.trikon.dev/pricing", "icon": "credit-card" },
         { "anchor": "GitHub", "href": "https://github.com/suryansh639/Trikon", "icon": "github" },
         { "anchor": "Support", "href": "mailto:support@trikon.dev", "icon": "envelope" }
       ]
@@ -53,6 +53,12 @@
               "introduction",
               "quickstart",
               "installation"
+            ]
+          },
+          {
+            "group": "Pricing",
+            "pages": [
+              "pricing"
             ]
           },
           {
@@ -102,8 +108,7 @@
           {
             "group": "Trust & Security",
             "pages": [
-              "security",
-              "pricing"
+              "security"
             ]
           }
         ]
@@ -145,7 +150,7 @@
         "header": "Product",
         "items": [
           { "label": "Docs", "href": "https://docs.trikon.dev" },
-          { "label": "Pricing", "href": "https://trikon.dev/pricing" },
+          { "label": "Pricing", "href": "https://docs.trikon.dev/pricing" },
           { "label": "Changelog", "href": "https://docs.trikon.dev/changelog" }
         ]
       },
