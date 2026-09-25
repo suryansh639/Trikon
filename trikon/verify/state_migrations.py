@@ -111,8 +111,7 @@ def maybe_migrate_verify_state(conn: sqlite3.Connection) -> None:
     # without touching in-tree behavior.
     try:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_meta "
-            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )
     except sqlite3.Error as exc:
         raise VerificationRunnerError(
@@ -137,8 +136,7 @@ def maybe_migrate_verify_state(conn: sqlite3.Connection) -> None:
             stored_version = int(raw_value)
         except (TypeError, ValueError) as exc:
             raise VerificationRunnerError(
-                f"maybe_migrate_verify_state: corrupt verify_schema_version="
-                f"{raw_value!r}"
+                f"maybe_migrate_verify_state: corrupt verify_schema_version={raw_value!r}"
             ) from exc
 
         if stored_version > CURRENT_VERIFY_SCHEMA_VERSION:

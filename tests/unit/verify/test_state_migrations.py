@@ -254,8 +254,7 @@ def _seed_row(
 def _seed_marker(conn: sqlite3.Connection, version_value: str) -> None:
     """Create ``schema_meta`` (if needed) and insert the ``verify_schema_version`` row."""
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_meta "
-        "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
     conn.execute(
         "INSERT INTO schema_meta (key, value) VALUES (?, ?)",
@@ -352,8 +351,7 @@ def test_property_marker_present_state_db_is_fast_path_no_op(
         warning_records = [
             record
             for record in caplog.records
-            if record.name == "trikon.verify.state_migrations"
-            and record.levelno == logging.WARNING
+            if record.name == "trikon.verify.state_migrations" and record.levelno == logging.WARNING
         ]
         assert warning_records == []
 
@@ -361,8 +359,7 @@ def test_property_marker_present_state_db_is_fast_path_no_op(
             verb for verb in spy.recorded_verbs if verb not in {"CREATE", "SELECT"}
         ]
         assert len(non_allowed_verbs) <= 1, (
-            f"marker-present migration emitted disallowed verbs: "
-            f"{spy.recorded_verbs}"
+            f"marker-present migration emitted disallowed verbs: {spy.recorded_verbs}"
         )
     finally:
         conn.close()
@@ -391,8 +388,7 @@ def test_property_notice_fires_iff_dropped_rows_positive(
         warning_records = [
             record
             for record in caplog.records
-            if record.name == "trikon.verify.state_migrations"
-            and record.levelno == logging.WARNING
+            if record.name == "trikon.verify.state_migrations" and record.levelno == logging.WARNING
         ]
 
         if n > 0:
@@ -493,9 +489,7 @@ def test_sqlite_error_on_delete_wraps_and_rows_preserved(
 
     assert isinstance(excinfo.value.__cause__, sqlite3.OperationalError)
 
-    count_row = in_memory_verify_db.execute(
-        "SELECT COUNT(*) FROM static_baseline"
-    ).fetchone()
+    count_row = in_memory_verify_db.execute("SELECT COUNT(*) FROM static_baseline").fetchone()
     assert count_row is not None
     assert count_row[0] == 3
 
@@ -531,9 +525,7 @@ def test_sqlite_error_on_insert_wraps_and_delete_rolled_back(
 
     assert isinstance(excinfo.value.__cause__, sqlite3.OperationalError)
 
-    count_row = in_memory_verify_db.execute(
-        "SELECT COUNT(*) FROM static_baseline"
-    ).fetchone()
+    count_row = in_memory_verify_db.execute("SELECT COUNT(*) FROM static_baseline").fetchone()
     assert count_row is not None
     assert count_row[0] == 3
 
@@ -552,8 +544,7 @@ def test_migration_is_idempotent_on_second_call(
         first_warnings = [
             record
             for record in caplog.records
-            if record.name == "trikon.verify.state_migrations"
-            and record.levelno == logging.WARNING
+            if record.name == "trikon.verify.state_migrations" and record.levelno == logging.WARNING
         ]
         assert len(first_warnings) == 1
 
@@ -562,8 +553,7 @@ def test_migration_is_idempotent_on_second_call(
         second_warnings = [
             record
             for record in caplog.records
-            if record.name == "trikon.verify.state_migrations"
-            and record.levelno == logging.WARNING
+            if record.name == "trikon.verify.state_migrations" and record.levelno == logging.WARNING
         ]
         assert second_warnings == []
 
@@ -573,9 +563,7 @@ def test_migration_is_idempotent_on_second_call(
     ).fetchone()
     assert marker_row == ("1",)
 
-    count_row = in_memory_verify_db.execute(
-        "SELECT COUNT(*) FROM static_baseline"
-    ).fetchone()
+    count_row = in_memory_verify_db.execute("SELECT COUNT(*) FROM static_baseline").fetchone()
     assert count_row is not None
     assert count_row[0] == 0
 
@@ -683,9 +671,7 @@ def test_state_migrations_public_surface_is_exactly_two_symbols() -> None:
     # ``state_migrations.py`` uses ``from __future__ import annotations``, so
     # annotations are stored as strings; ``eval_str=True`` resolves them back
     # to the real classes for identity comparison.
-    signature = inspect.signature(
-        _state_migrations.maybe_migrate_verify_state, eval_str=True
-    )
+    signature = inspect.signature(_state_migrations.maybe_migrate_verify_state, eval_str=True)
     parameters = list(signature.parameters.values())
     assert len(parameters) == 1
     (only_param,) = parameters
