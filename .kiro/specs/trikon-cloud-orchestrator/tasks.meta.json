@@ -1,0 +1,536 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Create the two package skeletons plus their `infra/` and `tests/` subpackage markers": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251978245
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251991408
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252131410
+      }
+    ],
+    "1.2 Confirm `pyproject.toml` package coverage and record the `cloud-runtime` dep intent": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251978457
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251992414
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252132205
+      }
+    ],
+    "2. Create `trikon_cloud/orchestrator/models.py` — SQS envelope, `RunTaskCall`, and `OrchestratorEnvConfig`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251978590
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252138925
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252647210
+      }
+    ],
+    "3. Create `trikon_cloud/orchestrator/logger.py` — Powertools wrapper and `LOGGING_DENYLIST`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251978752
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252139834
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252648149
+      }
+    ],
+    "4. Create `trikon_cloud/installation_lifecycle/models.py` — `InstallationEventMessage`, `LifecycleTableRow`, `LifecycleEnvConfig`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251978884
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252141150
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252649659
+      }
+    ],
+    "5. Create `trikon_cloud/installation_lifecycle/logger.py` — Powertools wrapper for the Lifecycle_Handler": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979012
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252142265
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252650922
+      }
+    ],
+    "6. Create `trikon_cloud/installation_lifecycle/iam_template.py` — pure IAM renderer + `canonical_json`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979105
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252143191
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252652095
+      }
+    ],
+    "7. Create `trikon_cloud/orchestrator/ecs_dispatcher.py` — `build_run_task_call`, `submit_run_task`, `TaskDefinitionResolver`, `classify_client_error`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979255
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252659289
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253239726
+      }
+    ],
+    "8. Create `trikon_cloud/orchestrator/never_fail_open.py` — synthetic verdict writer + neutral Check Run poster": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979356
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252660019
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253240750
+      }
+    ],
+    "9. Create `trikon_cloud/installation_lifecycle/iam_provisioner.py` — wraps `iam:CreateRole` / `PutRolePolicy` / `DeleteRole`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979469
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252661365
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253242207
+      }
+    ],
+    "10. Create `trikon_cloud/installation_lifecycle/dynamodb_writer.py` — CRUD on `trikon-cloud-installations`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979589
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252662600
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253243500
+      }
+    ],
+    "11. Create `trikon_cloud/orchestrator/handler.py` — `lambda_handler` with the eight-step flow": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979686
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253247991
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253646466
+      }
+    ],
+    "12. Create `trikon_cloud/installation_lifecycle/handler.py` — `lambda_handler` with the five-step flow": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979790
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253249004
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253646724
+      }
+    ],
+    "13. Create `trikon_cloud/orchestrator/infra/orchestrator_stack.py` — one CDK stack, both Lambdas": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251979955
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253652572
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254132510
+      }
+    ],
+    "14. Create `trikon_cloud/orchestrator/infra/app.py` — CDK entrypoint": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980123
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253653441
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254133281
+      }
+    ],
+    "15. Create `trikon_cloud/orchestrator/infra/README.md` — deploy runbook": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980246
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790253654271
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254134309
+      }
+    ],
+    "16. Create the shared `tests/conftest.py` for both packages — moto/respx fixtures + canonical constants": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980342
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254143084
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254563445
+      }
+    ],
+    "17.1 Create `test_models.py` — `SqsEventEnvelope`, `RunTaskCall`, `OrchestratorEnvConfig`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980461
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254564843
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790255226854
+      }
+    ],
+    "17.2 Create `test_logger.py` — `get_logger`, `append_job_context`, `LOGGING_DENYLIST`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980572
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254566147
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254883005
+      }
+    ],
+    "17.3 Create `test_ecs_dispatcher.py` — `build_run_task_call`, `submit_run_task`, `TaskDefinitionResolver`, `classify_client_error`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980686
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790255226948
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790259002473
+      }
+    ],
+    "17.4 Create `test_never_fail_open.py` — `write_orchestrator_failure_verdict`, `build_synthetic_verdict_row`, `OrchestratorGithubClient`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980798
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790255228273
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790259617084
+      }
+    ],
+    "17.5 Create `test_orchestrator_handler.py` — end-to-end coverage of the eight-step flow": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980892
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790259618073
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790260362807
+      }
+    ],
+    "18.1 Create `test_models.py` — `InstallationEventMessage`, `LifecycleTableRow`, `LifecycleEnvConfig`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251980993
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254567176
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254884040
+      }
+    ],
+    "18.2 Create `test_logger.py` — `get_logger`, `append_lifecycle_context`, `LOGGING_DENYLIST`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251981097
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254568538
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254885783
+      }
+    ],
+    "18.3 Create `test_iam_template.py` — `render_installation_policy_document`, `render_installation_assume_role_policy_document`, `canonical_json`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251981250
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254569502
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790254886700
+      }
+    ],
+    "18.4 Create `test_iam_provisioner.py` — `IamProvisioner.provision`, `IamProvisioner.deprovision`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251981341
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790255229252
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790259003457
+      }
+    ],
+    "18.5 Create `test_dynamodb_writer.py` — `InstallationsTableWriter` CRUD": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251981439
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790255230483
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790259004551
+      }
+    ],
+    "18.6 Create `test_lifecycle_handler.py` — end-to-end coverage of the five-step flow": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251981565
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790259619617
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790260363028
+      }
+    ],
+    "19. Create `tests/test_iam_policy_contract.py` — byte-match against Spec 2's CDK synth (Property 10)": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251981672
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790255231701
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790259005748
+      }
+    ],
+    "20. Checkpoint — pytest + coverage floors, mypy `--strict`, ruff, `cdk synth`, contract test green": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790251981773
+      },
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790260364021
+      },
+      {
+        "executionId": "4743f31d-0d30-4991-8588-86560a934c0e",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790264138630
+      }
+    ],
+    "1. Land the `trikon_cloud/orchestrator/` and `trikon_cloud/installation_lifecycle/` package skeletons": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790252132372
+      }
+    ],
+    "17. Land the orchestrator unit tests — one sub-task per module under `trikon_cloud/orchestrator/tests/`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790260363210
+      }
+    ],
+    "18. Land the installation-lifecycle unit tests — one sub-task per module under `trikon_cloud/installation_lifecycle/tests/`": [
+      {
+        "executionId": "56ed0c55-7601-4102-a08d-422a38cd89cc",
+        "chatSessionId": "sess_3b93b262-511d-4b10-bc53-02420ab117a9",
+        "timestamp": 1790260363413
+      }
+    ]
+  }
+}

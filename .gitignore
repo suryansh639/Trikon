@@ -33,6 +33,7 @@ env/
 # helper scripts (never commit)
 _*.sh
 _*.py
+_*.ps1
 # ...but __init__.py files are package markers, not helper scripts.
 # Without this exception, hatchling's VCS-aware file discovery excludes
 # every `__init__.py` from the wheel (because `_*.py` matches
@@ -50,3 +51,8 @@ semantic-review/
 # Test tooling caches
 .hypothesis/
 .benchmarks/
+
+# CDK synth outputs + env cache (never commit)
+cdk.out/
+cdk.out.*/
+cdk.context.json

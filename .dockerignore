@@ -1,0 +1,17 @@
+# Repo-root .dockerignore for Trikon Cloud container builds.
+# Extended by trikon-cloud-fargate-runner Spec 2 (design.md §10).
+#
+# Excludes test suites, CDK infra, Python caches, VCS metadata, and CI
+# assets from the Docker build context so the resulting image stays
+# under the ~100 MB compressed target and never ships tests / infra
+# code into production containers.
+
+trikon_cloud/fargate_runner/tests/
+trikon_cloud/fargate_runner/infra/
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/*.pyc
+.git/
+.github/
+.kiro/
