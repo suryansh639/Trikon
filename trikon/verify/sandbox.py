@@ -3,7 +3,7 @@
 Phase 2 ships a single sandbox backend: :class:`LocalDockerSandbox`, driven
 by the local Docker daemon through the ``docker-py`` client. The class is
 used as a context manager by :func:`trikon.verify.runner.run_verification`
-to spin up a pinned container from ``suryansh639/trikon:0.3.6``, run pytest,
+to spin up a pinned container from ``suryansh639/trikon:0.4.1``, run pytest,
 ruff, mypy, and repo-defined plugins inside it, and tear the container down
 cleanly on the way out.
 
@@ -50,7 +50,7 @@ PyPI (which would fail against ``network_mode="none"`` anyway).
 Exotic_Build_Backend requirements (``maturin``, ``scikit-build-core``,
 ``meson-python``, and private organization backends) remain a known
 limitation and fail closed with ``decision="require_human"``; the workaround
-is a downstream sandbox image ``FROM suryansh639/trikon:0.3.6`` that pins
+is a downstream sandbox image ``FROM suryansh639/trikon:0.4.1`` that pins
 the extra backend, passed as the ``image=`` kwarg to
 :class:`LocalDockerSandbox` / :func:`create_sandbox` /
 :func:`run_verification`.
@@ -190,7 +190,7 @@ class LocalDockerSandbox:
     def __init__(
         self,
         *,
-        image: str = "suryansh639/trikon:0.3.6",
+        image: str = "suryansh639/trikon:0.4.1",
         network_allowlist: tuple[str, ...] | None = None,
         mem_limit: str = "2g",
         cpu_quota: int = 200_000,
@@ -205,7 +205,7 @@ class LocalDockerSandbox:
 
         Args:
             image: Pinned sandbox image tag. Defaults to
-                ``suryansh639/trikon:0.3.6``, the tag built by
+                ``suryansh639/trikon:0.4.1``, the tag built by
                 ``scripts/build_sandbox_image.sh``.
             network_allowlist: Egress allowlist requested by policy. In
                 Phase 2 this argument is accepted for API stability with
@@ -703,7 +703,7 @@ Sandbox = LocalDockerSandbox | LocalSubprocessSandbox
 def create_sandbox(
     *,
     no_sandbox: bool = False,
-    image: str = "suryansh639/trikon:0.3.6",
+    image: str = "suryansh639/trikon:0.4.1",
     network_allowlist: tuple[str, ...] | None = None,
     mem_limit: str = "2g",
     cpu_quota: int = 200_000,

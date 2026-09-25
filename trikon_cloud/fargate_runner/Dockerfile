@@ -2,7 +2,7 @@
 # Trikon Cloud — Fargate verify-runner container (Spec 2 of M1).
 # Extends the SDK's sandbox image with a thin entrypoint layer.
 
-FROM suryansh639/trikon:0.3.6
+FROM suryansh639/trikon:0.4.1
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ WORKDIR /app
 COPY trikon_cloud/fargate_runner /app/trikon_cloud/fargate_runner
 COPY trikon_cloud/__init__.py /app/trikon_cloud/__init__.py
 
-# Install runtime deps. `trikon==0.3.6` matches the base image's SDK version exactly.
+# Install runtime deps. `trikon==0.4.1` matches the base image's SDK version exactly.
 # --no-cache-dir keeps the image thin.
 RUN pip install --no-cache-dir --disable-pip-version-check \
     "httpx>=0.27,<0.29" \
@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --disable-pip-version-check \
     "boto3>=1.35,<2" \
     "botocore>=1.35,<2" \
     "structlog>=24,<26" \
-    "trikon==0.3.6"
+    "trikon==0.4.1"
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

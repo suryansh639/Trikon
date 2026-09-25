@@ -1,6 +1,6 @@
 [project]
 name = "trikon"
-version = "0.4.0"
+version = "0.4.1"
 description = "Verification layer for autonomous AI coding agents. Blast radius + targeted tests + policy engine + structured verdicts."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -68,7 +68,7 @@ cloud = [
     "httpx>=0.27,<0.29",
     "PyJWT[crypto]>=2.9,<3",
     "structlog>=24,<26",
-    "trikon==0.4.0",
+    "trikon==0.4.1",
 ]
 
 [project.scripts]
