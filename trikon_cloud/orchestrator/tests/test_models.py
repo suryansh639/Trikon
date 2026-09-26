@@ -400,7 +400,7 @@ def test_orchestrator_env_config_env_driven_construction_populates_all_fields() 
     assert config.trikon_verdicts_table == "trikon_verdicts"
     assert (
         config.trikon_check_run_details_url_template
-        == "https://cloud.trikon.dev/audits/{delivery_id}"
+        == "https://api.trikon.unideploy.com/audits/{delivery_id}"
     )
     assert config.trikon_log_level == "INFO"
     assert config.aws_region == "us-east-1"

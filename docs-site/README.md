@@ -14,7 +14,7 @@ Docs served at `http://localhost:3000`.
 
 ## Deployment
 
-Mintlify auto-deploys on push to `main` when the docs-site is connected via the Mintlify dashboard. Target production URL: `https://docs.trikon.dev`.
+Mintlify auto-deploys on push to `main` when the docs-site is connected via the Mintlify dashboard. Target production URL: `https://trikon.unideploy.com`.
 
 ## Structure
 
@@ -45,4 +45,4 @@ docs-site/
 
 - Internal decisions (see `PRICING.md`, `OPERATIONS.md`, `EXECUTION_PLAN.md` in repo root).
 - Anything unreleased. Docs describe what shipped, not what's coming.
-- Marketing copy. That lives on `trikon.dev` (the landing page), not in docs.
+- Marketing copy. That lives on `trikon.unideploy.com` (the landing page), not in docs.

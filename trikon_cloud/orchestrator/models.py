@@ -337,7 +337,7 @@ class OrchestratorEnvConfig(BaseSettings):
     trikon_app_id: int = Field(alias="TRIKON_APP_ID", ge=1)
     trikon_check_run_details_url_template: str = Field(
         alias="TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE",
-        default="https://cloud.trikon.dev/audits/{delivery_id}",
+        default="https://api.trikon.unideploy.com/audits/{delivery_id}",
     )
     aws_region: str = Field(alias="AWS_REGION", default="us-east-1")
     trikon_log_level: str = Field(alias="TRIKON_LOG_LEVEL", default="INFO")

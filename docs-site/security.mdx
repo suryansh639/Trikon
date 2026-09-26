@@ -27,7 +27,7 @@ The single most important thing enterprise security teams ask us is *what leaves
 
 - Trikon never asks for secrets from your code or your CI.
 - Before persisting test output, we regex-scan for common secret shapes (API keys, tokens, private-key headers) and replace with `[REDACTED]`.
-- If you find a secret in a persisted verdict, email `security@trikon.dev` — we treat it as a Sev1.
+- If you find a secret in a persisted verdict, email `trikon-security@unideploy.com` — we treat it as a Sev1.
 
 ## Compliance
 
@@ -59,7 +59,7 @@ Enterprise DPAs can add custom subprocessor terms.
 
 ## Retention and deletion
 
-Automatic deletion at the end of the retention window. Customers can request earlier deletion via `DELETE /v1/data` or `support@trikon.dev`.
+Automatic deletion at the end of the retention window. Customers can request earlier deletion via `DELETE /v1/data` or `trikon@unideploy.com`.
 
 Data types with different retention:
 
@@ -86,7 +86,7 @@ If we suffer a security incident that affects customer data, we notify affected 
 
 ## Report a vulnerability
 
-Email `security@trikon.dev`. PGP key at `/.well-known/security.txt`.
+Email `trikon-security@unideploy.com`. PGP key at `/.well-known/security.txt`.
 
 ## Full operational detail
 

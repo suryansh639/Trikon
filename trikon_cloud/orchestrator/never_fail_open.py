@@ -632,7 +632,7 @@ def _extract_delivery_id_hint(details_url: str) -> str:
     """Extract the trailing path segment of ``details_url`` for the summary.
 
     The details-URL template is
-    ``https://cloud.trikon.dev/audits/{delivery_id}``; the last
+    ``https://api.trikon.unideploy.com/audits/{delivery_id}``; the last
     path segment is the delivery_id. This helper is a best-effort
     parse so the Check Run summary can carry the delivery_id in
     human-readable form. Pure — no IO, no exceptions escape.

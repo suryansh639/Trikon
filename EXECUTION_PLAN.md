@@ -13,7 +13,7 @@ By end of week 12, we must have:
 1. A working `trikon verify` CLI that produces real `Verdict` objects against real Python repos.
 2. An MCP server so any AI agent (Claude Code, Cursor, Unideploy autopilot) can call `verify_change`.
 3. A hosted GitHub App running in AWS, publicly installable.
-4. A polished landing page + Mintlify docs live at `docs.trikon.dev`.
+4. A polished landing page + Mintlify docs live at `trikon.unideploy.com`.
 5. A working Stripe → subscription flow that gates the hosted product.
 6. **At least one design partner running Trikon in production against a real AI agent generating real PRs.**
 7. Twenty OSS installs from Twitter / HN / GitHub visibility.
@@ -48,14 +48,14 @@ If any of these are missing, we are not GTM-ready.
 
 ### Deliverables
 
-- [ ] Domain purchased: `trikon.dev` (fallback `trikon.io` or `trikon.ai`). Buy today.
+- [x] Domain: **using `trikon.unideploy.com` subdomain** of the founder's existing `unideploy.com` domain (AWS-style: `aws.amazon.com` pattern). Standalone domain purchase deferred until Marketplace launch or Enterprise deal — at that point migrate DNS to a `.dev`/`.io`/`.ai` domain and leave subdomain as a 301 redirect for 30 days.
 - [ ] Repo public on GitHub: `github.com/suryansh639/Trikon` (already exists, this push is Phase 0).
 - [ ] AWS account decided: reuse Unideploy's `818515814116` for now, plan split to a dedicated account at customer #10.
 - [ ] Stripe account created + business bank connected. Team + Enterprise products configured (no discounts yet).
 - [ ] Vanta or Drata enrolled + endpoint agents installed.
-- [ ] `security.txt` + Terms of Service + Privacy Policy + DPA template published on `trikon.dev`.
-- [ ] `docs.trikon.dev` deployed via Mintlify (initial 3-page scaffold from `docs-site/`).
-- [ ] `status.trikon.dev` live (statuspage.io or self-hosted).
+- [ ] `security.txt` + Terms of Service + Privacy Policy + DPA template published on `trikon.unideploy.com`.
+- [ ] `trikon.unideploy.com` deployed via Mintlify (initial 3-page scaffold from `docs-site/`).
+- [ ] `status.trikon.unideploy.com` live (statuspage.io or self-hosted).
 - [ ] GitHub App created in draft mode (not yet listed on Marketplace).
 - [ ] PagerDuty rotation set up (even with 1 person; the rotation matters).
 - [ ] Trikon Slack workspace created for internal ops.
@@ -63,8 +63,8 @@ If any of these are missing, we are not GTM-ready.
 ### Definition of Done
 
 - `pip install trikon` (from a private PyPI test index) installs the CLI; `trikon --help` works.
-- `docs.trikon.dev` returns 200 with 3 real pages.
-- `status.trikon.dev` returns 200 with all services listed.
+- `trikon.unideploy.com` returns 200 with 3 real pages.
+- `status.trikon.unideploy.com` returns 200 with all services listed.
 - Vanta shows >80% of automated controls green.
 
 ### Risks
@@ -242,7 +242,7 @@ Move from local-only to a hosted GitHub App. This is the biggest lift.
 - [ ] `trikon-github-webhook` Lambda: verifies signature, enqueues verify job.
 - [ ] ECS worker task: pulls from SQS, shallow-clones repo, runs the same `sdk.verify()` code path.
 - [ ] `trikon-authorizer` Lambda: API-key + Cognito JWT auth.
-- [ ] Basic web dashboard at `dashboard.trikon.dev`:
+- [ ] Basic web dashboard at `trikon.unideploy.com/dashboard`:
   - List verdicts by repo, filter by decision.
   - Verdict detail page (renders `evidence` structurally).
   - Manual re-run button.
@@ -305,14 +305,14 @@ Make everything a stranger encounters actually work.
 
 ### Deliverables
 
-- [ ] Landing page at `trikon.dev`:
+- [ ] Landing page at `trikon.unideploy.com`:
   - Hero: value prop + install command + demo GIF (the video from Phase 3).
   - "How it works" section: the 3-panel change-intel → verification → verdict diagram.
   - Comparison table: Trikon vs CodeRabbit/Greptile.
   - Pricing table matching `PRICING.md` exactly.
   - Testimonial slot (empty until Phase 8's design partner agrees to a quote).
   - Install button → sign-up flow.
-- [ ] Mintlify docs polished at `docs.trikon.dev`:
+- [ ] Mintlify docs polished at `trikon.unideploy.com`:
   - Introduction, Quickstart, Concepts, Policy DSL, MCP Integration, Self-hosted deployment.
   - API reference (auto-generated from `trikon/evidence/report.py` Pydantic models).
   - Example gallery: 5 concrete integration scenarios.

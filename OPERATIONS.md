@@ -256,8 +256,8 @@ Match Unideploy's account layout for simplicity: `us-east-1`, same account `8185
 - OpenTelemetry traces → AWS X-Ray (traces every verdict end-to-end)
 
 ### DNS + edge
-- Route53 hosted zone for `trikon.dev` (working domain name; buy `.dev` or `.io` or `.ai`)
-- CloudFront distributions: `docs.trikon.dev`, `dashboard.trikon.dev`
+- Route53 hosted zone for `trikon.unideploy.com` (subdomain delegation from the parent `unideploy.com` zone)
+- CloudFront distributions: `trikon.unideploy.com`, `api.trikon.unideploy.com`
 - ACM cert (region us-east-1 for CloudFront, plus regional cert for API Gateway)
 
 ---
@@ -385,7 +385,7 @@ Copy this list. Check items off. Nothing goes public until every checkbox is gre
 
 ### Legal + compliance
 - [ ] Company entity + business bank account
-- [ ] Domain purchased (trikon.dev / trikon.io / trikon.ai)
+- [x] Domain: `trikon.unideploy.com` subdomain of parent `unideploy.com` (standalone `.dev`/`.io` deferred; see EXECUTION_PLAN.md Phase 0)
 - [ ] Terms of Service, Privacy Policy, DPA template published
 - [ ] Cookies + analytics policy compliant with GDPR + CCPA
 - [ ] Trademark check on "Trikon" cleared in target markets
@@ -408,7 +408,7 @@ Copy this list. Check items off. Nothing goes public until every checkbox is gre
 ### Observability
 - [ ] CloudWatch dashboards live
 - [ ] PagerDuty rotation configured (even if it's just you and one other)
-- [ ] Status page (statuspage.io or self-hosted) at `status.trikon.dev`
+- [ ] Status page (statuspage.io or self-hosted) at `status.trikon.unideploy.com`
 - [ ] Sentry (or equivalent) capturing Lambda + worker errors
 - [ ] X-Ray traces flowing end-to-end from webhook to verdict
 
@@ -421,13 +421,13 @@ Copy this list. Check items off. Nothing goes public until every checkbox is gre
 
 ### Ops
 - [ ] On-call rotation + runbook published in this file
-- [ ] Support inbox (`support@trikon.dev`) + shared Slack channel
+- [ ] Support inbox (`trikon@unideploy.com`) + shared Slack channel
 - [ ] Customer-onboarding checklist for the first design partner
 - [ ] Rollback procedure documented + tested
 
 ### GTM
 - [ ] Landing page: value prop, install command, demo GIF, pricing, install button
-- [ ] Docs site live at `docs.trikon.dev` (Mintlify)
+- [ ] Docs site live at `trikon.unideploy.com` (Mintlify)
 - [ ] Pricing page matches PRICING.md exactly
 - [ ] Sign-up flow works end-to-end from landing page to first verdict
 - [ ] Twitter / LinkedIn / HN launch prepared but not fired yet

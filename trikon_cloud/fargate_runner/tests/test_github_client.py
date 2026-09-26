@@ -130,7 +130,7 @@ def _make_check_run_create_payload() -> CheckRunCreatePayload:
         status="completed",
         conclusion="failure",
         output=CheckRunOutput(title="Test", summary="Test summary"),
-        details_url="https://cloud.trikon.dev/audits/x",
+        details_url="https://api.trikon.unideploy.com/audits/x",
     )
 
 
@@ -140,7 +140,7 @@ def _make_check_run_update_payload() -> CheckRunUpdatePayload:
         status="completed",
         conclusion="success",
         output=CheckRunOutput(title="Updated", summary="Updated summary"),
-        details_url="https://cloud.trikon.dev/audits/x",
+        details_url="https://api.trikon.unideploy.com/audits/x",
     )
 
 

@@ -278,7 +278,7 @@ def test_check_run_create_payload_name_literal_trikon() -> None:
         status="completed",
         conclusion="failure",
         output=output,
-        details_url="https://cloud.trikon.dev/audits/x",
+        details_url="https://api.trikon.unideploy.com/audits/x",
     )
     assert payload.name == "Trikon"
 
@@ -293,7 +293,7 @@ def test_check_run_create_payload_name_literal_trikon() -> None:
             status="completed",
             conclusion="failure",
             output=output,
-            details_url="https://cloud.trikon.dev/audits/x",
+            details_url="https://api.trikon.unideploy.com/audits/x",
         )
 
 

@@ -292,7 +292,7 @@ class OrchestratorStack(Stack):
                 "TRIKON_APP_PRIVATE_KEY_SECRET_ARN": app_private_key_secret_arn,
                 "TRIKON_APP_ID": str(app_id),
                 "TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE": (
-                    "https://cloud.trikon.dev/audits/{delivery_id}"
+                    "https://api.trikon.unideploy.com/audits/{delivery_id}"
                 ),
                 "TRIKON_LOG_LEVEL": "INFO",
             },

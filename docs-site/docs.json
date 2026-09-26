@@ -11,11 +11,11 @@
   "logo": {
     "light": "/logo/logo-light.svg",
     "dark": "/logo/logo-dark.svg",
-    "href": "https://trikon.dev"
+    "href": "https://trikon.unideploy.com"
   },
   "seo": {
     "metatags": {
-      "canonical": "https://docs.trikon.dev"
+      "canonical": "https://trikon.unideploy.com"
     }
   },
   "appearance": {
@@ -37,10 +37,10 @@
   "navigation": {
     "global": {
       "anchors": [
-        { "anchor": "Website", "href": "https://trikon.dev", "icon": "globe" },
-        { "anchor": "Pricing", "href": "https://docs.trikon.dev/pricing", "icon": "credit-card" },
+        { "anchor": "Website", "href": "https://trikon.unideploy.com", "icon": "globe" },
+        { "anchor": "Pricing", "href": "https://trikon.unideploy.com/pricing", "icon": "credit-card" },
         { "anchor": "GitHub", "href": "https://github.com/suryansh639/Trikon", "icon": "github" },
-        { "anchor": "Support", "href": "mailto:support@trikon.dev", "icon": "envelope" }
+        { "anchor": "Support", "href": "mailto:trikon@unideploy.com", "icon": "envelope" }
       ]
     },
     "tabs": [
@@ -149,17 +149,17 @@
       {
         "header": "Product",
         "items": [
-          { "label": "Docs", "href": "https://docs.trikon.dev" },
-          { "label": "Pricing", "href": "https://docs.trikon.dev/pricing" },
-          { "label": "Changelog", "href": "https://docs.trikon.dev/changelog" }
+          { "label": "Docs", "href": "https://trikon.unideploy.com" },
+          { "label": "Pricing", "href": "https://trikon.unideploy.com/pricing" },
+          { "label": "Changelog", "href": "https://trikon.unideploy.com/changelog" }
         ]
       },
       {
         "header": "Company",
         "items": [
-          { "label": "Trust", "href": "https://docs.trikon.dev/security" },
-          { "label": "Status", "href": "https://status.trikon.dev" },
-          { "label": "Contact", "href": "mailto:support@trikon.dev" }
+          { "label": "Trust", "href": "https://trikon.unideploy.com/security" },
+          { "label": "Status", "href": "https://status.trikon.unideploy.com" },
+          { "label": "Contact", "href": "mailto:trikon@unideploy.com" }
         ]
       }
     ]

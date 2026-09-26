@@ -109,7 +109,7 @@ class RunnerEnvConfig(BaseSettings):
     app_id: int = Field(alias="TRIKON_APP_ID", ge=1)
     check_run_details_url_template: str = Field(
         alias="TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE",
-        default="https://cloud.trikon.dev/audits/{audit_id}",
+        default="https://api.trikon.unideploy.com/audits/{audit_id}",
     )
     log_level: str = Field(alias="TRIKON_LOG_LEVEL", default="INFO")
 

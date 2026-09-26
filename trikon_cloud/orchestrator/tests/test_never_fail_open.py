@@ -304,10 +304,10 @@ def _details_url() -> str:
     """Render the canonical ``details_url`` used across the write-verdict tests.
 
     Matches :attr:`OrchestratorEnvConfig.trikon_check_run_details_url_template`'s
-    default (``https://cloud.trikon.dev/audits/{delivery_id}``) with
+    default (``https://api.trikon.unideploy.com/audits/{delivery_id}``) with
     :data:`CANONICAL_DELIVERY_ID` substituted.
     """
-    return f"https://cloud.trikon.dev/audits/{CANONICAL_DELIVERY_ID}"
+    return f"https://api.trikon.unideploy.com/audits/{CANONICAL_DELIVERY_ID}"
 
 
 @pytest.fixture
@@ -1067,7 +1067,7 @@ def test_extract_delivery_id_hint_returns_full_string_when_no_slash() -> None:
     Check Run summary carries the caller's raw string as its
     correlation hint. Covers ``line 643`` in
     :mod:`trikon_cloud.orchestrator.never_fail_open`, which the
-    canonical ``https://cloud.trikon.dev/audits/{delivery_id}``
+    canonical ``https://api.trikon.unideploy.com/audits/{delivery_id}``
     template used by every other test in this module never reaches.
     """
     assert (
