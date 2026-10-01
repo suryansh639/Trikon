@@ -1,14 +1,38 @@
 """Pydantic models for the Trikon policy YAML.
 
-Schema version 1 supports:
+Schema version 1 supports these `when` condition keys. Every key in one
+`when` mapping must match (AND); `any_of` gives OR inside a rule.
 
   - path-glob matching       (`any_path_matches`, `no_path_matches`)
   - blast-radius thresholds  (`change.blast_radius.score`)
   - test-status conditions   (`verification.tests.status`)
-  - static-check deltas      (`verification.static.new_errors`)
-  - actor / time conditions  (`actor.agent_id`, `time_of_day`)
+  - static-check deltas      (`verification.static.new_errors: {eq|gt|lt: int}`)
 
-Extending the schema requires bumping `version` and adding a migration in
+Added by the engine fail-safe work (still version 1):
+
+  - test evidence            (`verification.tests.executed: {eq|gt|lt: int}`,
+                              which is `passed + failed`;
+                              `verification.tests.total: {eq|gt|lt: int}`;
+                              `verification.tests.strategy: <str>`;
+                              `verification.tests.incomplete: <bool>`)
+  - import evidence          (`verification.imports.broken: {eq|gt|lt: int}`,
+                              the number of Broken_Imports;
+                              `verification.imports.incomplete: <bool>`)
+  - Python_Change            (`change.python_change: <bool>`)
+  - disjunction              (`any_of: [<when mapping>, ...]`, a non-empty
+                              list of non-empty mappings; true when any one
+                              matches under AND semantics; may nest)
+
+Boolean keys accept only YAML `true` / `false`, not `1` / `0`. Any unknown
+key, or a value of the wrong shape, raises `RuleMatchError` at evaluation
+time, and the SDK fails closed to `require_human`.
+
+Why `version` stays 1: the new keys are purely additive and no existing key
+changed its meaning, so every version-1 policy written for the previous
+release evaluates exactly as before. A previous-release engine reading a
+policy that uses a new key raises `RuleMatchError` on the unknown key and
+fails closed, so it never silently ignores a condition. Changing the meaning
+of an existing key would require bumping `version` and adding a migration in
 `loader.py`.
 """
 

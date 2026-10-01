@@ -9,7 +9,7 @@ Implements the two entry points named in ``design.md §3.1``:
 
 * :func:`default_policy` — load the packaged
   ``trikon/policy/default_policy.yaml`` shipped inside the wheel and
-  return the same conservative 6-rule policy the ``trikon init``
+  return the same conservative 8-rule policy the ``trikon init``
   scaffold writes into ``.trikon/policy.yaml`` (Requirement 2.5).
 
 Every foreign exception raised inside these functions

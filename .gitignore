@@ -29,6 +29,13 @@ env/
 # Trikon local state
 .trikon/
 *.trikon.db
+# ...except the sample repo's checked-in policy, which the integration
+# suite and the policy mirror test read. Git cannot re-include a file
+# whose parent directory is excluded, so re-include the directory, ignore
+# everything in it again (state.db stays local), then re-include the policy.
+!examples/sample_repo/.trikon/
+examples/sample_repo/.trikon/*
+!examples/sample_repo/.trikon/policy.yaml
 
 # helper scripts (never commit)
 _*.sh
@@ -44,6 +51,9 @@ _*.ps1
 # at runtime. Same hatchling-VCS-discovery mechanism as the __init__.py
 # rule above — exempt the shim explicitly so the wheel picks it up.
 !trikon/verify/_plugin_shim.py
+# The Property 12 test imports this frozen reference evaluator as a module,
+# so it is test code, not a helper script. Exempt it so CI has it.
+!tests/unit/policy/_evaluator_v041_reference.py
 
 # Subagent artifacts (semantic reviews, task-execution transcripts)
 semantic-review/
