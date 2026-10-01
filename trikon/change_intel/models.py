@@ -63,6 +63,15 @@ class Hunk:
     ``new_lines`` describe the post-image range. ``added_lines`` and
     ``removed_lines`` are the explicit index sets rather than counts, because
     downstream stages need to intersect them with symbol byte ranges.
+
+    ``source_lines`` / ``target_lines`` carry the hunk's line *text* so the
+    import checker can rebuild the pre-image from the working tree when no
+    base SHA is available (``reverse_hunks``). ``source_lines`` holds the
+    context and removed lines; ``target_lines`` holds the context and added
+    lines, both in diff order and without their line terminator. They are
+    excluded from ``==``, ``hash()`` and ``repr()`` so every existing
+    equality assertion and content-keyed cache behaves exactly as it did when
+    ``Hunk`` stored only indices.
     """
 
     old_start: int
@@ -71,6 +80,8 @@ class Hunk:
     new_lines: int
     added_lines: tuple[int, ...] = field(default_factory=tuple)
     removed_lines: tuple[int, ...] = field(default_factory=tuple)
+    source_lines: tuple[str, ...] = field(default=(), compare=False, hash=False, repr=False)
+    target_lines: tuple[str, ...] = field(default=(), compare=False, hash=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

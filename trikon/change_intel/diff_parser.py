@@ -69,6 +69,15 @@ call, and ``unidiff`` allocates roughly ``2x`` the diff size while parsing.
 100 MiB peak is the largest allocation we let this stage make.
 """
 
+_DEV_NULL: str = "/dev/null"
+"""The path a unified diff names for the missing side of an added or deleted file."""
+
+_GIT_NEW_FILE_HEADER: str = "new file mode "
+"""Prefix of git's extended header line that marks an added file."""
+
+_GIT_DELETED_FILE_HEADER: str = "deleted file mode "
+"""Prefix of git's extended header line that marks a deleted file."""
+
 
 def parse_diff(
     repo_path: Path,
@@ -275,20 +284,65 @@ def _build_file_changes(patch_set: unidiff.PatchSet) -> tuple[FileChange, ...]:
 
 
 def _classify_change_kind(patched_file: unidiff.PatchedFile) -> ChangeKind:
-    """Map :mod:`unidiff`'s per-file predicates to our :data:`ChangeKind` literal.
+    """Map one :class:`unidiff.PatchedFile` to our :data:`ChangeKind` literal.
 
-    Order matters: ``is_rename`` must be checked before ``is_modified_file``
-    because unidiff sets both flags on a rename-with-edits, and we want the
-    rename classification to win (downstream consumers care that the path
+    Added and deleted are decided only from explicit markers (see
+    :func:`_is_added_file` and :func:`_is_deleted_file`), never from hunk
+    shape. unidiff's own ``is_added_file`` / ``is_removed_file`` also treat a
+    lone ``@@ -0,0 +1,N @@`` / ``@@ -1,N +0,0 @@`` hunk as an added / deleted
+    file, but ``--unified=0`` (which the SHA path always uses) produces exactly
+    those headers for an insertion at the top of a file and for a removal
+    starting at line 1. Both are modifications.
+
+    Order matters: ``is_rename`` must be checked before falling back to
+    ``"modified"`` because a rename-with-edits also changes lines, and we want
+    the rename classification to win (downstream consumers care that the path
     moved, not just that lines changed).
     """
-    if patched_file.is_added_file:
+    if _is_added_file(patched_file):
         return "added"
-    if patched_file.is_removed_file:
+    if _is_deleted_file(patched_file):
         return "deleted"
     if patched_file.is_rename:
         return "renamed"
     return "modified"
+
+
+def _is_added_file(patched_file: unidiff.PatchedFile) -> bool:
+    """Return whether the diff marks ``patched_file`` as added.
+
+    The markers are a ``--- /dev/null`` source or git's ``new file mode``
+    extended header. unidiff already rewrites the source to ``/dev/null``
+    when its pattern matches that header; the header is also checked directly
+    so the classification does not depend on that rewrite (the pattern does
+    not match a ``\\r\\n``-terminated header, for one). The header is the only
+    marker for an empty new file, whose git diff has no ``---`` / ``+++``
+    lines and no hunks.
+    """
+    if str(patched_file.source_file) == _DEV_NULL:
+        return True
+    return _has_git_header(patched_file, _GIT_NEW_FILE_HEADER)
+
+
+def _is_deleted_file(patched_file: unidiff.PatchedFile) -> bool:
+    """Return whether the diff marks ``patched_file`` as deleted.
+
+    The mirror of :func:`_is_added_file`: a ``+++ /dev/null`` target or git's
+    ``deleted file mode`` extended header.
+    """
+    if str(patched_file.target_file) == _DEV_NULL:
+        return True
+    return _has_git_header(patched_file, _GIT_DELETED_FILE_HEADER)
+
+
+def _has_git_header(patched_file: unidiff.PatchedFile, prefix: str) -> bool:
+    """Return whether one of ``patched_file``'s extended header lines starts with ``prefix``.
+
+    ``patch_info`` holds the lines unidiff read before the file's ``---``
+    line; for git, that is the ``diff --git`` line and its extended headers.
+    It is ``None`` when there were no such lines.
+    """
+    return any(str(line).startswith(prefix) for line in patched_file.patch_info or ())
 
 
 def _rename_source_path(patched_file: unidiff.PatchedFile) -> str:
@@ -309,9 +363,11 @@ def _build_hunk(unidiff_hunk: unidiff.Hunk) -> Hunk:
 
     The added / removed line index sets are computed once here rather than
     lazily so the resulting :class:`Hunk` is fully hashable and safe to store
-    in caches keyed by content.
+    in caches keyed by content. The line-text fields are filled alongside;
+    they do not take part in equality or hashing.
     """
     added_lines, removed_lines = _line_index_sets(unidiff_hunk)
+    source_lines, target_lines = _line_texts(unidiff_hunk)
     return Hunk(
         old_start=int(unidiff_hunk.source_start),
         old_lines=int(unidiff_hunk.source_length),
@@ -319,7 +375,39 @@ def _build_hunk(unidiff_hunk: unidiff.Hunk) -> Hunk:
         new_lines=int(unidiff_hunk.target_length),
         added_lines=added_lines,
         removed_lines=removed_lines,
+        source_lines=source_lines,
+        target_lines=target_lines,
     )
+
+
+def _line_texts(
+    unidiff_hunk: Iterable[unidiff.patch.Line],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return ``(source_lines, target_lines)`` as line text in diff order.
+
+    ``source_lines`` is the pre-image side (context + removed lines);
+    ``target_lines`` is the post-image side (context + added lines).
+
+    Only context / added / removed lines are kept. unidiff's "No newline at
+    end of file" marker lines (backslash line type) and the trailing blank
+    lines it appends after a hunk (empty line type) match none of those
+    predicates, so they never reach either tuple.
+    """
+    source: list[str] = []
+    target: list[str] = []
+    for line in unidiff_hunk:
+        # unidiff's ``Line.value`` keeps the line terminator ("\n" or
+        # "\r\n"). We store the text without it; ``reverse_hunks`` compares
+        # after ``rstrip("\r\n")`` and splices whole lines.
+        text = str(line.value).rstrip("\r\n")
+        if line.is_context:
+            source.append(text)
+            target.append(text)
+        elif line.is_removed:
+            source.append(text)
+        elif line.is_added:
+            target.append(text)
+    return tuple(source), tuple(target)
 
 
 def _line_index_sets(
