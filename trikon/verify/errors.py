@@ -15,6 +15,7 @@ from __future__ import annotations
 from trikon.exceptions import TrikonError
 
 __all__ = [
+    "CollectionPassError",
     "CoverageBuildError",
     "PluginLoadError",
     "SandboxExecError",
@@ -93,4 +94,22 @@ class CoverageBuildError(VerificationRunnerError):
 
     On any raise, the caller's previously-persisted ``coverage_map`` /
     ``tests_seen`` rows are left untouched (Requirement 5.3).
+    """
+
+
+class CollectionPassError(VerificationRunnerError):
+    """The Collection_Pass report could not be read or parsed.
+
+    Raised when the ``pytest --collect-only`` report
+    (``/workspace/tmp/collect.json``) is missing or malformed: a non-zero
+    ``cat`` of the report (for example a conftest import failure, where
+    pytest exits 4 before writing it), a JSON decode failure, or a payload
+    whose shape does not match the pytest-json-report layout. When the
+    report is missing, the diagnostic message MUST carry a truncated tail
+    (the last 2 KB) of the collection stdout so the root cause is visible.
+
+    Like every :class:`VerificationRunnerError`, it fail-closes to a
+    ``require_human`` verdict at the ``trikon.sdk.verify`` boundary.
+    See trikon-engine-fail-safe requirements.md §Requirement 7.1-7.2 and
+    design.md §5, §7 and "Error Handling".
     """

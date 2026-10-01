@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from trikon.verify.strategy import CoverageMapState
+
 # ---------------------------------------------------------------------------
 # Test-selection output (see design.md §3.2)
 # ---------------------------------------------------------------------------
@@ -53,11 +55,20 @@ class SelectedTests:
     map (or was routed through the filename heuristic because the whole map
     was stale); the CLI human summary from Task 11 renders these to explain
     why a test was chosen.
+    ``coverage_map_state`` says which map backed the selection (Requirement
+    1.4): ``"missing"`` when the map has no rows, ``"stale"`` when it is too
+    old or any symbol missed it, ``"present"`` otherwise. The runner feeds it
+    to :func:`trikon.verify.strategy.choose_strategy`. The test selector keeps
+    ``coverage_map_stale`` at its previous-release value, which always equals
+    ``coverage_map_state != "present"``. The default of ``"missing"`` is the
+    conservative choice for a caller that builds a ``SelectedTests`` without
+    consulting a map.
     """
 
     node_ids: tuple[str, ...]
     coverage_map_stale: bool
     fallback_reasons: tuple[str, ...]
+    coverage_map_state: CoverageMapState = "missing"
 
 
 # ---------------------------------------------------------------------------
