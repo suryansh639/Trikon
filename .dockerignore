@@ -5,13 +5,21 @@
 # assets from the Docker build context so the resulting image stays
 # under the ~100 MB compressed target and never ships tests / infra
 # code into production containers.
+#
+# Dockerfile.sandbox builds from this context too. Its builder stage needs
+# trikon/, trikon_cloud/, pyproject.toml, README.md, uv.lock and .gitignore,
+# so never exclude those.
 
 trikon_cloud/fargate_runner/tests/
 trikon_cloud/fargate_runner/infra/
 **/__pycache__
 **/.mypy_cache
 **/.pytest_cache
+**/.ruff_cache
+**/.hypothesis
+.benchmarks/
 **/*.pyc
+.venv/
 .git/
 .github/
 .kiro/

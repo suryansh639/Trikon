@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Trikon Verification Runner sandbox image (suryansh639/trikon:0.4.1).
+# Trikon Verification Runner sandbox image (suryansh639/trikon:0.5.0).
 #
 # This Dockerfile is the image contract for `trikon/verify/sandbox.py`.
 # Every tool version below is pinned; bumping any of them is a deliberate
@@ -10,10 +10,47 @@
 # See `docs/verification.md` for the full image contract, rebuild
 # instructions, and cache-invalidation semantics.
 #
-# Build:
-#   docker build -t suryansh639/trikon:0.4.1 -f Dockerfile.sandbox .
-# (or run `scripts/build_sandbox_image.sh`)
+# The image also ships the `trikon` CLI, so `trikon --version` inside it
+# prints the release version (Requirement 10.10 in
+# `.kiro/specs/trikon-engine-fail-safe/requirements.md`).
+#
+# Build from the repo root; the builder stage reads `trikon/`,
+# `trikon_cloud/`, `pyproject.toml`, `README.md`, `uv.lock` and
+# `.gitignore` from the build context:
+#   docker build -t suryansh639/trikon:0.5.0 -f Dockerfile.sandbox .
 
+# ---------------------------------------------------------------------------
+# Builder stage: build the trikon wheel and export its locked runtime
+# dependencies from uv.lock. Nothing from this stage except /wheels reaches
+# the final image.
+# ---------------------------------------------------------------------------
+# Same digest-pinned base as the final stage (see the pin comment there).
+FROM python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534 AS builder
+
+# uv is pinned by version and by the multi-arch index digest of that tag,
+# like the base image. It is only used to export constraints from uv.lock.
+COPY --from=ghcr.io/astral-sh/uv:0.12.20@sha256:100047e74f30778ab704942321a09750d6158739573ff58bf3924085cc6cd2d8 /uv /usr/local/bin/uv
+
+WORKDIR /src
+# `.gitignore` comes along so hatchling applies the same file-selection
+# rules as the PyPI wheel build.
+COPY pyproject.toml uv.lock README.md .gitignore ./
+COPY trikon/ ./trikon/
+COPY trikon_cloud/ ./trikon_cloud/
+
+# `--no-emit-project` drops the editable `-e .` line, which pip rejects in a
+# constraints file. Optional extras (`dev`, `cloud`) are not exported. The
+# grep fails the build if a `-e` or `trikon` line ever slips through.
+RUN pip wheel --no-cache-dir --no-deps -w /wheels . \
+ && uv export --frozen --no-hashes --no-dev --no-emit-project \
+        --format requirements-txt -o /wheels/constraints.txt \
+ && if grep -Eiq '^(-e|trikon([^a-z0-9_.-]|$))' /wheels/constraints.txt; then \
+        echo 'constraints.txt must not contain a -e or trikon line' >&2; exit 1; \
+    fi
+
+# ---------------------------------------------------------------------------
+# Final stage: the sandbox image.
+# ---------------------------------------------------------------------------
 # Pinned to the multi-arch manifest digest of `python:3.11-slim` published
 # 2026-09-02 on Docker Hub. The digest pin (not just the tag) is what makes
 # the image immutable across Docker Hub cache eviction; a stale tag can
@@ -49,6 +86,32 @@ RUN pip install --no-cache-dir \
         poetry-core==1.9.1 \
         setuptools-scm==8.1.0 \
         pdm-backend==2.4.3
+
+# The trikon CLI, in its own venv at /opt/trikon. Its dependencies stay out
+# of the system site-packages above, which sandboxed target-repo pytest
+# uses, and `_plugin_shim` can keep assuming trikon is not importable there.
+# Every dependency is pinned by the uv.lock export; the venv's own pip comes
+# from the digest-pinned base image. The copy of constraints.txt stays in
+# the image so the pins can be audited.
+#
+# Only `trikon` goes onto PATH, so `python`, `pip` and `pytest` still
+# resolve to the system installs. It is a wrapper rather than a symlink:
+# the image has no `git` binary, and GitPython raises at import time
+# without one unless GIT_PYTHON_REFRESH says otherwise. The wrapper sets it
+# to `quiet` (unless the caller already set it) for the CLI only, so the
+# environment that sandboxed pytest sees is unchanged.
+COPY --from=builder /wheels /wheels
+RUN python -m venv /opt/trikon \
+ && /opt/trikon/bin/pip install --no-cache-dir --disable-pip-version-check \
+        -c /wheels/constraints.txt /wheels/trikon-*.whl \
+ && cp /wheels/constraints.txt /opt/trikon/constraints.txt \
+ && printf '%s\n' \
+        '#!/bin/sh' \
+        'export GIT_PYTHON_REFRESH="${GIT_PYTHON_REFRESH:-quiet}"' \
+        'exec /opt/trikon/bin/trikon "$@"' \
+        > /usr/local/bin/trikon \
+ && chmod 0755 /usr/local/bin/trikon \
+ && rm -rf /wheels
 
 # Baseline site-packages layer stays in the read-only image.
 # Repo-supplied dependencies land in a tmpfs-backed venv at runtime.
