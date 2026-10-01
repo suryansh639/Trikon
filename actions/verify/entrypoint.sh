@@ -3,8 +3,10 @@
 #
 # Signature: entrypoint.sh <base> <head> <repo-path> <no-sandbox> <fail-on>
 #
-# Runs inside the published Trikon Docker image (docker://suryansh639/trikon:0.4.1),
-# which ships with the `trikon` CLI plus pytest/ruff/mypy pre-installed. The
+# Runs inside the action image built from actions/verify/Dockerfile on top of
+# the published sandbox image (docker://suryansh639/trikon:0.5.0). The image
+# has pytest/ruff/mypy in the system Python, the `trikon` CLI in its own venv
+# at /opt/trikon, and git (see the Dockerfile for safe.directory). The
 # consumer's checkout is mounted at /github/workspace by the GitHub Actions
 # runner; `repo-path` is resolved relative to that mount.
 #
@@ -26,7 +28,9 @@ set -uo pipefail
 BASE="${1:-}"
 HEAD="${2:-}"
 REPO_PATH_INPUT="${3:-.}"
-NO_SANDBOX="${4:-false}"
+# Defaults to true, matching action.yml: sandbox mode cannot bind-mount
+# /github/workspace from the Docker host on GitHub-hosted runners.
+NO_SANDBOX="${4:-true}"
 FAIL_ON="${5:-block}"
 
 if [[ -z "${BASE}" || -z "${HEAD}" ]]; then
@@ -74,9 +78,13 @@ redact() {
 
 # --- install consumer dev deps (best-effort) ----------------------------------
 #
-# trikon runs pytest / ruff / mypy against the *consumer's* code inside the
-# sandbox (or on the host with --no-sandbox), which needs the consumer's own
-# imports resolvable. We try, in order: pyproject.toml with a [dev] extra,
+# trikon runs pytest / ruff / mypy against the *consumer's* code, which needs
+# the consumer's own imports resolvable. This install goes into the image's
+# system Python, which is where the system pytest (with pytest-json-report),
+# ruff and mypy live; with --no-sandbox those are the tools trikon runs. The
+# trikon CLI itself lives in /opt/trikon, so the consumer's packages can't
+# change trikon's dependencies. (Sandbox mode installs the repo again inside
+# its own container.) We try, in order: pyproject.toml with a [dev] extra,
 # then plain pyproject, then requirements-dev.txt, then requirements.txt.
 # Every step is best-effort — if the consumer's install fails, trikon will
 # still run and fail-close to `require_human` with a clear reason, which is
@@ -97,6 +105,16 @@ fi
 echo "::endgroup::"
 
 # --- build trikon verify command ----------------------------------------------
+#
+# Call the bundled CLI by absolute path, not through PATH: if the consumer's
+# install above pulls in trikon (for example when the consumer *is* trikon),
+# pip writes its own console script over /usr/local/bin/trikon.
+
+TRIKON_BIN="/opt/trikon/bin/trikon"
+if [[ ! -x "${TRIKON_BIN}" ]]; then
+  echo "::error::Trikon Verify: bundled CLI not found at ${TRIKON_BIN}." >&2
+  exit 1
+fi
 
 TRIKON_ARGS=(verify
   --repo "${REPO_PATH}"
@@ -116,7 +134,7 @@ fi
 
 STDERR_FILE="$(mktemp)"
 # shellcheck disable=SC2312
-VERDICT_JSON="$(trikon "${TRIKON_ARGS[@]}" 2>"${STDERR_FILE}")"
+VERDICT_JSON="$("${TRIKON_BIN}" "${TRIKON_ARGS[@]}" 2>"${STDERR_FILE}")"
 TRIKON_EXIT=$?
 
 if [[ -s "${STDERR_FILE}" ]]; then
