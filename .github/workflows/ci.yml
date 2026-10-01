@@ -45,6 +45,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # The Sample_Repo_Suite runs inside DEFAULT_SANDBOX_IMAGE. Build it
+      # locally so the job never depends on the tag being on Docker Hub yet.
+      - name: Build sandbox image tagged from pyproject.toml
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          docker build --load -t "suryansh639/trikon:${VERSION}" -f Dockerfile.sandbox .
       - run: pip install -e ".[dev]"
       - run: pytest tests/integration/ -v -o "addopts=-ra --strict-markers"
 
@@ -62,10 +68,13 @@ jobs:
         run: pytest tests/benchmarks/ --benchmark-only --benchmark-max-time=60 --no-cov -o "addopts=-ra --strict-markers" -m "slow and not django"
 
   # Nightly perf gate for the Verification Runner (Phase 2, Task 14.3).
-  # Distinct from the Phase-1 `perf` job above: that one runs on PRs against
-  # the change_intel benchmarks; this one runs on schedule against the verify
-  # benchmarks with the pinned sandbox image built fresh. Gates the wall-clock
-  # ceilings from Requirement 8.1 / 8.2 / 8.3.
+  # Distinct from the Phase-1 `perf` job above, which runs on PRs. No test
+  # carries the `perf` marker yet (the verify benchmarks for the wall-clock
+  # ceilings in Requirement 8.1 / 8.2 / 8.3 are not written), so `-m perf`
+  # alone collected nothing and pytest exited 5. The job selects every `slow`
+  # benchmark in tests/benchmarks/ (the Django cases skip unless
+  # TRIKON_DJANGO_PATH is set) plus any future `perf` one, with the pinned
+  # sandbox image built fresh for the verify benchmarks to use.
   perf-nightly:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
@@ -77,11 +86,15 @@ jobs:
           python-version: "3.11"
           cache: pip
       - uses: docker/setup-buildx-action@v3
-      - name: Build pinned sandbox image (trikon/sandbox:0.1.0)
-        run: ./scripts/build_sandbox_image.sh
+      # setup-buildx-action makes a docker-container builder current, so
+      # --load is needed to put the image in the local image store.
+      - name: Build sandbox image tagged from pyproject.toml
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          docker build --load -t "suryansh639/trikon:${VERSION}" -f Dockerfile.sandbox .
       - run: pip install -e ".[dev]"
       - name: Run nightly verify perf benchmarks
-        run: pytest tests/benchmarks/ -m perf --benchmark-only --benchmark-max-time=60 -o "addopts=-ra --strict-markers"
+        run: pytest tests/benchmarks/ -m "slow or perf" --benchmark-only --benchmark-max-time=60 -o "addopts=-ra --strict-markers"
 
   # Nightly integration tests for `trikon/verify/**` (Task 14.3).
   # Requires a live Docker daemon and the pinned sandbox image; runs the
@@ -98,8 +111,12 @@ jobs:
           python-version: "3.11"
           cache: pip
       - uses: docker/setup-buildx-action@v3
-      - name: Build pinned sandbox image (trikon/sandbox:0.1.0)
-        run: ./scripts/build_sandbox_image.sh
+      # setup-buildx-action makes a docker-container builder current, so
+      # --load is needed to put the image in the local image store.
+      - name: Build sandbox image tagged from pyproject.toml
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          docker build --load -t "suryansh639/trikon:${VERSION}" -f Dockerfile.sandbox .
       - run: pip install -e ".[dev]"
       - name: Run verify integration tests
         run: pytest tests/integration/verify/ -m integration -o "addopts=-ra --strict-markers"
