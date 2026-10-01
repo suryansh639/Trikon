@@ -313,10 +313,10 @@ def test_mcp_stdio_round_trip_against_click(
     )
     datetime.fromisoformat(created_at_raw)
 
-    # schema_version == 2 (bumped in Phase 3 alongside the Decision
-    # widening + warnings field addition — design.md §3.6).
-    assert verdict_dict.get("schema_version") == 2, (
-        f"schema_version must be 2, got {verdict_dict.get('schema_version')!r}"
+    # schema_version == 3 (bumped by the engine fail-safe work, which added
+    # the TestReport strategy/collection fields and verification.imports).
+    assert verdict_dict.get("schema_version") == 3, (
+        f"schema_version must be 3, got {verdict_dict.get('schema_version')!r}"
     )
 
     # warnings is a list (empty is fine — see EMPTY_VERIFICATION invariant).

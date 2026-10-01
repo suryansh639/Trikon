@@ -56,7 +56,7 @@ __all__ = ["record_verdict"]
 #   decision      TEXT NOT NULL      — verdict.decision  (CHECK enforces alphabet)
 #   matched_rule  TEXT (nullable)    — verdict.matched_rule (None → SQL NULL)
 #   reason        TEXT NOT NULL      — verdict.reason
-#   verdict_json  TEXT NOT NULL      — verdict.model_dump_json()  (schema_version=2)
+#   verdict_json  TEXT NOT NULL      — verdict.model_dump_json()  (schema_version=3)
 # ---------------------------------------------------------------------------
 _INSERT_AUDIT_LOG: str = (
     "INSERT INTO audit_log "
@@ -93,7 +93,7 @@ def record_verdict(conn: sqlite3.Connection, verdict: Verdict) -> None:
         verdict: The :class:`Verdict` to record. ``verdict.matched_rule``
             may be ``None``; SQLite stores it as ``NULL``. The full JSON
             serialization is captured in the ``verdict_json`` column at
-            ``schema_version == 2`` — the six other columns are query
+            ``schema_version == 3`` — the six other columns are query
             projections of that lossless record.
 
     Raises:
