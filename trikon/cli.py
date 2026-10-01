@@ -11,6 +11,9 @@ Commands (Phase 2):
     coverage build   Build the coverage map used for test selection.
     mcp serve        Run the Trikon MCP server so AI agents can call ``trikon_verify``.
 
+Global option ``--version`` prints the installed version and exits 0, the
+same output as the ``version`` command.
+
 The ``verify`` command is still a stub; ``init``, ``version``, the two
 ``debug`` sub-commands, and ``coverage build`` are wired to real code
 paths. See ``design.md §11`` for the CLI surface contract.
@@ -75,6 +78,32 @@ mcp_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(mcp_app, name="mcp")
+
+
+def _print_version_and_exit(value: bool) -> None:
+    """Eager ``--version`` handler: print ``trikon.__version__`` and exit 0."""
+    if not value:
+        return
+    from trikon import __version__
+
+    typer.echo(__version__)
+    raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    show_version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_print_version_and_exit,
+        is_eager=True,
+        help="Print the installed Trikon version and exit.",
+    ),
+) -> None:
+    # No docstring on purpose: the group help stays the ``typer.Typer(help=...)``
+    # text. The ``--version`` work happens in the eager callback, so a
+    # subcommand invocation reaches this body with ``show_version`` False.
+    del show_version
 
 
 @app.command()
