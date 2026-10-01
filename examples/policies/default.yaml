@@ -29,18 +29,14 @@ sensitive_paths:
 rules:
 
   # -----------------------------------------------------------------
-  # 1) Sensitive subsystems ALWAYS require a human.
-  #    This is a strong default. Loosen it deliberately if you must.
+  # 1) A static import of a module or name the change removed blocks.
   # -----------------------------------------------------------------
-  - name: "sensitive path requires human"
+  - name: "broken static imports"
     when:
-      any_path_matches:
-        - "auth/**"
-        - "billing/**"
-        - "payments/**"
-        - "**/migrations/**"
-    then: require_human
-    reason: "Change touches a sensitive subsystem."
+      verification.imports.broken:
+        gt: 0
+    then: block
+    reason: "Change leaves static imports of removed modules or names."
 
   # -----------------------------------------------------------------
   # 2) Any test failure blocks the change.
@@ -62,7 +58,23 @@ rules:
     reason: "Change introduced new static-analysis errors."
 
   # -----------------------------------------------------------------
-  # 4) Large blast radius always requires a human, even if tests pass.
+  # 4) Sensitive subsystems require a human, even when every check passes.
+  #    The block rules above run first, so a sensitive change that breaks
+  #    imports or tests, or adds static errors, is blocked.
+  #    This is a strong default. Loosen it deliberately if you must.
+  # -----------------------------------------------------------------
+  - name: "sensitive path requires human"
+    when:
+      any_path_matches:
+        - "auth/**"
+        - "billing/**"
+        - "payments/**"
+        - "**/migrations/**"
+    then: require_human
+    reason: "Change touches a sensitive subsystem."
+
+  # -----------------------------------------------------------------
+  # 5) Large blast radius always requires a human, even if tests pass.
   # -----------------------------------------------------------------
   - name: "large blast radius requires human"
     when:
@@ -71,7 +83,23 @@ rules:
     reason: "Blast radius is HIGH; a human should review scope."
 
   # -----------------------------------------------------------------
-  # 5) Green + small blast + no new lint noise → auto-allow.
+  # 6) A Python change needs complete evidence before it can be allowed:
+  #    at least one executed test, a complete test run and a complete
+  #    import check. Otherwise a human reviews it.
+  # -----------------------------------------------------------------
+  - name: "insufficient test evidence requires human"
+    when:
+      change.python_change: true
+      any_of:
+        - verification.tests.executed:
+            eq: 0
+        - verification.tests.incomplete: true
+        - verification.imports.incomplete: true
+    then: require_human
+    reason: "Python change without complete test or import evidence."
+
+  # -----------------------------------------------------------------
+  # 7) Green + small blast + no new lint noise → auto-allow.
   #    This is what unlocks unattended agent execution.
   # -----------------------------------------------------------------
   - name: "green, low-blast auto-allow"

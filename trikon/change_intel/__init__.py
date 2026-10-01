@@ -26,6 +26,7 @@ from trikon.change_intel.errors import (
     DepGraphError,
     DiffInputError,
     DiffParseError,
+    ImportCheckError,
     RepoNotFoundError,
     SymbolResolutionError,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "DiffParseError",
     "FileChange",
     "Hunk",
+    "ImportCheckError",
     "RefKind",
     "RepoNotFoundError",
     "SymbolDef",

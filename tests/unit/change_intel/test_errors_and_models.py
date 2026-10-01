@@ -27,6 +27,7 @@ from trikon.change_intel import (
     DiffParseError,
     FileChange,
     Hunk,
+    ImportCheckError,
     RepoNotFoundError,
     SymbolDef,
     SymbolResolutionError,
@@ -54,10 +55,11 @@ ERROR_SUBCLASSES: tuple[type[ChangeIntelError], ...] = (
     SymbolResolutionError,
     DepGraphError,
     BlastRadiusError,
+    ImportCheckError,
 )
 
 #: Names that a ``raise`` site inside ``trikon/change_intel/**`` is allowed to
-#: mention. The 8 ``ChangeIntelError`` names are the sanctioned vocabulary;
+#: mention. The 9 ``ChangeIntelError`` names are the sanctioned vocabulary;
 #: ``NotImplementedError`` covers stubs for tasks that have not landed yet
 #: (see ``design.md §10 Definition of Done`` — must be zero on release);
 #: ``AssertionError`` covers ``assert``-style unreachable guards.

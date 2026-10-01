@@ -3,9 +3,9 @@
 Phase 2 ships a single sandbox backend: :class:`LocalDockerSandbox`, driven
 by the local Docker daemon through the ``docker-py`` client. The class is
 used as a context manager by :func:`trikon.verify.runner.run_verification`
-to spin up a pinned container from ``suryansh639/trikon:0.4.1``, run pytest,
-ruff, mypy, and repo-defined plugins inside it, and tear the container down
-cleanly on the way out.
+to spin up a pinned container from :data:`DEFAULT_SANDBOX_IMAGE`
+(``suryansh639/trikon:0.5.0``), run pytest, ruff, mypy, and repo-defined
+plugins inside it, and tear the container down cleanly on the way out.
 
 Every call site in this module catches ``docker.errors.*`` (and every other
 foreign exception the Docker client can raise) and re-raises the appropriate
@@ -29,13 +29,14 @@ Writable-tmpfs contract: the container spec mounts three tmpfs volumes at
 ``/home/trikon`` (256 MiB), all owned ``uid=10001, gid=10001`` to match the
 non-root ``trikon`` user; these are the ONLY writable paths inside the
 container because the root filesystem is mounted read-only.
-:func:`_verify_mount_and_install_deps` MUST therefore set both
-``TMPDIR=/workspace/tmp`` and ``PIP_CACHE_DIR=/workspace/pip-cache`` in the
-exec env for every ``pip`` invocation, otherwise ``tempfile``'s
-default-search fallback chain (``/tmp``, ``/var/tmp``, ``/usr/tmp``,
-``<cwd>``) collapses against the read-only rootfs and pip dies with
-``FileNotFoundError: No usable temporary directory found`` before
-Dep_Install_Step can run. The ``/home/trikon`` tmpfs exists so pip's
+:meth:`LocalDockerSandbox.exec` therefore sets ``TMPDIR=/workspace/tmp`` on
+every exec (:data:`_SANDBOX_EXEC_ENV`), and
+:func:`_verify_mount_and_install_deps` also sets
+``PIP_CACHE_DIR=/workspace/pip-cache`` for the ``pip`` invocation. Otherwise
+``tempfile``'s default-search fallback chain (``/tmp``, ``/var/tmp``,
+``/usr/tmp``, ``<cwd>``) collapses against the read-only rootfs and pip or
+pytest dies with ``FileNotFoundError: No usable temporary directory found``
+before it can do any work. The ``/home/trikon`` tmpfs exists so pip's
 ``--user`` fallback (triggered when the ambient site-packages under
 ``/usr/lib/python*`` is not writable by uid 10001) can materialize
 ``~/.local/lib/pythonX/site-packages`` on the read-only rootfs.
@@ -50,7 +51,7 @@ PyPI (which would fail against ``network_mode="none"`` anyway).
 Exotic_Build_Backend requirements (``maturin``, ``scikit-build-core``,
 ``meson-python``, and private organization backends) remain a known
 limitation and fail closed with ``decision="require_human"``; the workaround
-is a downstream sandbox image ``FROM suryansh639/trikon:0.4.1`` that pins
+is a downstream sandbox image ``FROM suryansh639/trikon:0.5.0`` that pins
 the extra backend, passed as the ``image=`` kwarg to
 :class:`LocalDockerSandbox` / :func:`create_sandbox` /
 :func:`run_verification`.
@@ -90,6 +91,11 @@ logger = logging.getLogger(__name__)
 # startup sequence agree on the exact paths and uid/gid pairs.
 # ---------------------------------------------------------------------------
 
+# The single pin for the sandbox image tag. ``LocalDockerSandbox``,
+# ``create_sandbox`` and ``trikon.verify.runner.run_verification`` all
+# default to it; the tag tracks ``project.version`` in ``pyproject.toml``.
+DEFAULT_SANDBOX_IMAGE = "suryansh639/trikon:0.5.0"
+
 _SANDBOX_UID_GID = "10001:10001"
 _REPO_MOUNT_TARGET = "/workspace/repo"
 _TMPFS_TMP = "/workspace/tmp"
@@ -110,6 +116,19 @@ _TMPFS_SPEC: dict[str, str] = {
     _TMPFS_PIP_CACHE: "size=256m,uid=10001,gid=10001",
     _TMPFS_HOME: "size=256m,uid=10001,gid=10001",
 }
+# Base environment for every :meth:`LocalDockerSandbox.exec`. Caller-supplied
+# ``env`` pairs are layered on top and win on a key clash. ``TMPDIR`` points
+# at the writable ``/workspace/tmp`` tmpfs: the rootfs and the repo mount are
+# both read-only, so ``tempfile``'s fallback chain (``/tmp``, ``/var/tmp``,
+# ``/usr/tmp``, ``<cwd>``) finds no writable directory. Without it pytest's
+# capture ``TemporaryFile`` raises ``FileNotFoundError: No usable temporary
+# directory found`` before collection, no JSON report is written, and every
+# verdict with a non-empty test selection fail-closes. Applying it here (not
+# per call site) covers pytest, static tools, plugins and the coverage
+# builder, and keeps the sandbox path off the host-local backend. ``HOME`` is
+# not set: Docker already derives ``/home/trikon`` (a writable tmpfs) from the
+# image's passwd entry for uid 10001.
+_SANDBOX_EXEC_ENV: tuple[tuple[str, str], ...] = (("TMPDIR", _TMPFS_TMP),)
 _CONTAINER_LABELS: dict[str, str] = {
     "trikon.role": "verify-sandbox",
     "trikon.version": "0.1.0",
@@ -190,7 +209,7 @@ class LocalDockerSandbox:
     def __init__(
         self,
         *,
-        image: str = "suryansh639/trikon:0.4.1",
+        image: str = DEFAULT_SANDBOX_IMAGE,
         network_allowlist: tuple[str, ...] | None = None,
         mem_limit: str = "2g",
         cpu_quota: int = 200_000,
@@ -205,8 +224,8 @@ class LocalDockerSandbox:
 
         Args:
             image: Pinned sandbox image tag. Defaults to
-                ``suryansh639/trikon:0.4.1``, the tag built by
-                ``scripts/build_sandbox_image.sh``.
+                :data:`DEFAULT_SANDBOX_IMAGE` (``suryansh639/trikon:0.5.0``),
+                the tag built from ``Dockerfile.sandbox``.
             network_allowlist: Egress allowlist requested by policy. In
                 Phase 2 this argument is accepted for API stability with
                 the eventual Phase-3 signature but is **not enforced**;
@@ -428,6 +447,10 @@ class LocalDockerSandbox:
         ``timeout_seconds=None`` disables the bracket entirely; callers
         that want the runner-wide budget must pass a concrete float.
 
+        The exec environment is :data:`_SANDBOX_EXEC_ENV` (``TMPDIR`` on
+        the writable tmpfs) with ``env`` layered on top, so every tool
+        run inside the read-only container has a usable temp directory.
+
         Because ``docker-py``'s ``exec_start(stream=False)`` blocks in the
         current thread until the exec finishes, the deadline is enforced
         by running ``exec_start`` on a single-worker
@@ -451,7 +474,7 @@ class LocalDockerSandbox:
                 cmd=list(argv),
                 user=_SANDBOX_UID_GID,
                 workdir=workdir,
-                environment=dict(env),
+                environment={**dict(_SANDBOX_EXEC_ENV), **dict(env)},
             )
         except docker.errors.DockerException as exc:
             raise SandboxExecError(f"exec_create failed for {argv!r}: {exc}") from exc
@@ -703,7 +726,7 @@ Sandbox = LocalDockerSandbox | LocalSubprocessSandbox
 def create_sandbox(
     *,
     no_sandbox: bool = False,
-    image: str = "suryansh639/trikon:0.4.1",
+    image: str = DEFAULT_SANDBOX_IMAGE,
     network_allowlist: tuple[str, ...] | None = None,
     mem_limit: str = "2g",
     cpu_quota: int = 200_000,
@@ -736,6 +759,7 @@ def create_sandbox(
 
 
 __all__ = [
+    "DEFAULT_SANDBOX_IMAGE",
     "LocalDockerSandbox",
     "LocalSubprocessSandbox",
     "Sandbox",

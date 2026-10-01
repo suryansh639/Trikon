@@ -6,7 +6,7 @@ description: "Phase 3 of Trikon. Turns an ImpactSet plus a VerificationReport in
 The policy engine is the part of Trikon that grades executed evidence and decides what to do with it. It is Phase 3 of the [12-week build](https://github.com/suryansh639/Trikon/blob/main/EXECUTION_PLAN.md): the layer that takes a [`Verdict`](/concepts/verdicts) from `require_human`-forever placeholder to a real decision-emitting artefact.
 
 <Note>
-  **Phase 3 status.** `sdk.verify()` now returns a Verdict whose `decision`, `matched_rule`, `reason`, and `warnings` are populated by evaluating a real [`Policy`](/concepts/policy-dsl) against the pipeline's evidence. `trikon verify` maps the decision to an exit code (`0`/`1`/`2`). Every verdict — success path or fail-closed — writes exactly one row to the `audit_log` SQLite table.
+  **Phase 3 status.** `sdk.verify()` now returns a Verdict whose `decision`, `matched_rule`, `reason`, and `warnings` are populated by evaluating a real [`Policy`](/concepts/policy-dsl) against the pipeline's evidence, followed by a non-overridable [Safety_Floor](#safety-floor). `trikon verify` maps the decision to an exit code (`0`/`1`/`2`). Every verdict — success path or fail-closed — writes exactly one row to the `audit_log` SQLite table.
 </Note>
 
 ## What it does
@@ -24,6 +24,9 @@ evaluate_policy
    ├── first matching terminal `then` → decision + matched_rule + reason
    ├── every matching `warn` rule → appended to Verdict.warnings
    └── no terminal match → decision="require_human" (fall-through)
+   │
+   ▼
+floor_verdict (Safety_Floor: allow → block / require_human only)
    │
    ▼
 Verdict (decision, matched_rule, reason, warnings, evidence.policy_results)
@@ -56,7 +59,7 @@ git diff  ──▶  parse_diff  ──▶  compute_impact  ──▶  run_verif
 ```
 
 - **Input**: an [`ImpactSet`](/concepts/blast-radius) (`changed_files`, `blast_radius_score`, impacted symbols), a [`VerificationReport`](/verification/overview) (test outcomes, static findings, plugin findings), and a [`Policy`](/concepts/policy-dsl) loaded from `.trikon/policy.yaml` or the packaged default.
-- **Output**: a [`Verdict`](/concepts/verdicts) with `decision`, `matched_rule`, `reason`, `warnings`, and `evidence.policy_results` all populated. `schema_version` is `2`.
+- **Output**: a [`Verdict`](/concepts/verdicts) with `decision`, `matched_rule`, `reason`, `warnings`, and `evidence.policy_results` all populated. `schema_version` is `3`.
 
 The SDK boundary is one `try` block. Any subclass of `PolicyEvaluationError` — or any other `TrikonError` from Phase 1 or Phase 2 — becomes `require_human` with `EMPTY_IMPACT_SET` and `EMPTY_VERIFICATION`. See [never fail-open](#never-fail-open).
 
@@ -95,7 +98,7 @@ Full DSL reference: [policy authoring](/policy/authoring).
 
 ### Append-only audit
 
-Every verdict — success path or fail-closed path — is written to the `audit_log` table in `.trikon/state.db` before `sdk.verify` returns. One row per Verdict. Six columns: `audit_id`, `created_at`, `decision`, `matched_rule`, `reason`, `verdict_json` — with `verdict_json` holding `verdict.model_dump_json()` losslessly at `schema_version=2`.
+Every verdict — success path or fail-closed path — is written to the `audit_log` table in `.trikon/state.db` before `sdk.verify` returns. One row per Verdict. Six columns: `audit_id`, `created_at`, `decision`, `matched_rule`, `reason`, `verdict_json` — with `verdict_json` holding `verdict.model_dump_json()` losslessly at `schema_version=3`. Rows written by the previous release keep `schema_version=2` and still parse.
 
 The module `trikon/audit_log/**` emits only `INSERT` statements after the initial `CREATE TABLE IF NOT EXISTS`. There is no `update_*`, `delete_*`, `truncate_*`, or `purge_*` function anywhere in the subpackage. An AST-scan test enforces the closure across every green build: strings containing SQL verbs `UPDATE`, `DELETE`, `DROP`, `ALTER`, or `TRUNCATE` are rejected in production sources.
 
@@ -103,18 +106,29 @@ An audit-write failure is a hard failure. If `AuditLogError` escapes the writer,
 
 ## The default policy
 
-`trikon init` scaffolds a starter policy in `<repo>/.trikon/policy.yaml` by copying the packaged `trikon/policy/default_policy.yaml`. The default is deliberately conservative — six rules, ordered so the strictest terminals fire first:
+`trikon init` scaffolds a starter policy in `<repo>/.trikon/policy.yaml` by copying the packaged `trikon/policy/default_policy.yaml`. The default is deliberately conservative — eight rules, ordered so the strictest terminals fire first:
 
-1. **`sensitive path requires human`** — any change touching `auth/**`, `billing/**`, `payments/**`, or `**/migrations/**` returns `require_human` unconditionally.
-2. **`impacted tests failed`** — any pytest failure in the impacted set returns `block`.
+1. **`broken static imports`** — any static import of a module or name the change removed (`verification.imports.broken > 0`) returns `block`.
+2. **`impacted tests failed`** — any pytest failure in the executed tests returns `block`.
 3. **`new static-analysis errors`** — any new ruff or mypy finding not present in the baseline returns `block`.
-4. **`large blast radius requires human`** — `blast_radius_score == "HIGH"` returns `require_human` even when tests pass.
-5. **`green, low-blast auto-allow`** — passed tests, zero new static errors, `LOW` blast radius returns `allow`.
-6. **`default`** — unconditional `require_human` fall-through.
+4. **`sensitive path requires human`** — any change touching `auth/**`, `billing/**`, `payments/**`, or `**/migrations/**` returns `require_human`.
+5. **`large blast radius requires human`** — `blast_radius_score == "HIGH"` returns `require_human` even when tests pass.
+6. **`insufficient test evidence requires human`** — a Python change with 0 executed tests, incomplete test evidence, or incomplete import analysis returns `require_human`.
+7. **`green, low-blast auto-allow`** — passed tests, zero new static errors, `LOW` blast radius returns `allow`.
+8. **`default`** — unconditional `require_human` fall-through.
 
-The rules are ordered on purpose. Rule 1 fires before rule 5, so a green low-blast change that also touches `auth/**` is `require_human` (rule 1 wins), not `allow`. This is the [first-match-terminal](#first-match-terminal) contract in action.
+The rules are ordered on purpose. Rule 4 fires before rule 7, so a green low-blast change that also touches `auth/**` is `require_human` (rule 4 wins), not `allow`. The three `block` rules come before rule 4, so a sensitive change that breaks imports or tests, or adds static errors, is blocked rather than routed to a human. This is the [first-match-terminal](#first-match-terminal) contract in action.
 
-When `.trikon/policy.yaml` does not exist, `load_policy` returns the packaged default — no error, no fallback warning, just the same six rules the wheel ships with. Details: [policy authoring §default policy](/policy/authoring#default-policy).
+When `.trikon/policy.yaml` does not exist, `load_policy` returns the packaged default — no error, no fallback warning, just the same eight rules the wheel ships with.
+
+## Safety floor
+
+After the policy, `floor_verdict` applies a Safety_Floor that takes no policy argument, so no policy can disable it. It only ever changes an `allow`:
+
+- any broken import → `block`, `matched_rule="safety_floor.broken_imports"`;
+- otherwise, a Python change with 0 executed tests (`passed + failed`), an incomplete `TestReport` or an incomplete `ImportReport` → `require_human`, `matched_rule="safety_floor.insufficient_evidence"`.
+
+A floored Verdict's `reason` names the floor condition and the policy's original decision and rule, and `evidence.policy_results` ends with one extra `RuleResult` for the floor. The default policy already encodes both conditions (rules 1 and 6), so the floor matters for custom policies. Details: [policy authoring §default policy](/policy/authoring#default-policy).
 
 ## Performance
 
@@ -122,7 +136,7 @@ On the [`examples/sample_repo`](https://github.com/suryansh639/Trikon/tree/main/
 
 | Stage | Wall-clock ceiling | Typical |
 | --- | --- | --- |
-| `evaluate_policy` on the 6-rule default policy | 100 ms | 2-6 ms |
+| `evaluate_policy` on the 8-rule default policy | 100 ms | 2-6 ms |
 | `load_policy` on a ≤10 KB `.trikon/policy.yaml` | 50 ms | 3-8 ms |
 | `format_markdown` on a fully-populated Verdict | 10 ms | <1 ms |
 

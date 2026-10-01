@@ -104,6 +104,19 @@ class DepGraphError(ChangeIntelError):
     """
 
 
+class ImportCheckError(ChangeIntelError):
+    """The static import checker could not inspect the repository.
+
+    Raised by the import-checker I/O shell (:func:`check_imports`) when it
+    cannot run ``git`` at all (the executable is missing, the spawn fails
+    with :class:`OSError`, or ``git show`` exceeds its timeout) or when
+    walking the head tree under ``repo_path`` raises :class:`OSError`. The
+    original exception is chained via ``__cause__``. Per-file read or parse
+    failures never raise this class; they are recorded on the import report
+    as unparsed files instead.
+    """
+
+
 class BlastRadiusError(ChangeIntelError):
     """The blast-radius orchestrator could not produce an :class:`ImpactSet`.
 

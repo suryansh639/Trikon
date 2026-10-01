@@ -20,11 +20,13 @@ Strategy, in the priority order established by ``design.md §6``:
    file stem with any leading ``src/`` prefix stripped. This surfaces at
    least the co-located test module for a brand-new symbol that has never
    been observed by an instrumented run.
-3. **Staleness signal.** If the freshest ``built_at`` row is older than seven
-   days *or* any symbol missed under the requested ``base_sha``, the whole
-   selection is flagged ``coverage_map_stale=True`` and every symbol routes
-   through the filename fallback for the remainder of the call
-   (Requirement 1.3).
+3. **Staleness signal.** If the map has no rows, or the freshest
+   ``built_at`` row is older than seven days, every symbol routes through the
+   filename fallback. The selection records ``coverage_map_state``
+   (Requirement 1.4): ``"missing"`` for an empty map, ``"stale"`` for an old
+   map or when any symbol missed under the requested ``base_sha``, and
+   ``"present"`` otherwise. ``coverage_map_stale`` keeps its previous-release
+   meaning and equals ``coverage_map_state != "present"`` (Requirement 1.3).
 
 Every raise site in this module wraps its cause in
 :class:`~trikon.verify.errors.TestSelectionError`. Requirement 6.1 forbids
@@ -39,12 +41,20 @@ import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from trikon.evidence.report import ImpactSet, SymbolRef
 from trikon.verify.errors import TestSelectionError
 from trikon.verify.models import SelectedTests
+from trikon.verify.strategy import CoverageMapState
 
 __all__ = ["select_impacted_tests"]
+
+# Result of the Step 1 freshness probe. ``missing``: the map has no rows.
+# ``stale``: the freshest row is older than :data:`_COVERAGE_MAP_MAX_AGE`.
+# ``fresh``: the freshest row is recent enough. Per-symbol misses are folded
+# in afterwards, when the probe result becomes a :data:`CoverageMapState`.
+_MapFreshness = Literal["missing", "stale", "fresh"]
 
 
 # ---------------------------------------------------------------------------
@@ -72,18 +82,21 @@ def select_impacted_tests(
     Implements the full six-step algorithm from ``design.md §6``:
 
     * Step 1 queries ``MAX(built_at) FROM coverage_map`` and computes an age
-      against ``now``; an empty table or an age above
-      :data:`_COVERAGE_MAP_MAX_AGE` marks the whole map stale.
-    * Step 2 iterates ``impact.changed_symbols`` and, when the map is not
-      stale and ``base_sha`` is known, looks up
+      against ``now``; an empty table is ``"missing"`` and an age above
+      :data:`_COVERAGE_MAP_MAX_AGE` is ``"stale"``. Either one makes the
+      whole map unusable for per-symbol lookups.
+    * Step 2 iterates ``impact.changed_symbols`` and, when the map is
+      ``"fresh"`` and ``base_sha`` is known, looks up
       ``(qualified_name, built_against_sha)`` rows in ``coverage_map``. A hit
       contributes its parsed ``test_ids_json`` list to the union; a miss is
       recorded on the fallback list with the full :class:`SymbolRef` (we
       need ``file_path`` for the filename heuristic in Step 4).
-    * Step 3 sets ``coverage_map_stale`` to ``True`` if the freshest row was
-      stale *or* any symbol missed the map (Requirement 1.3 requires the
-      staleness signal to propagate to :attr:`TestReport.coverage_map_stale`
-      whenever the fallback engaged).
+    * Step 3 derives ``coverage_map_state`` (Requirement 1.4): ``"missing"``
+      if the map has no rows, ``"stale"`` if it is too old *or* any symbol
+      missed it, ``"present"`` otherwise. ``coverage_map_stale`` is
+      ``state != "present"``, which is exactly its previous-release value
+      (Requirement 1.3 requires the staleness signal to propagate to
+      :attr:`TestReport.coverage_map_stale` whenever the fallback engaged).
     * Step 4 derives filename-heuristic candidates from each missed symbol's
       ``file_path``: strip any leading ``src/``, take the file stem as the
       test leaf, and check both ``tests/test_{leaf}.py`` (flat layout) and
@@ -120,8 +133,8 @@ def select_impacted_tests(
     Returns:
         A :class:`SelectedTests` whose ``node_ids`` is a sorted tuple of
         the union of coverage-map hits and on-disk fallback candidates,
-        ``coverage_map_stale`` reflects the combined Step 1 + Step 3
-        signal, and ``fallback_reasons`` records one
+        ``coverage_map_state`` and ``coverage_map_stale`` reflect the
+        combined Step 1 + Step 3 signal, and ``fallback_reasons`` records one
         ``"{qname}: no coverage-map row"`` entry per missed symbol.
 
     Raises:
@@ -139,7 +152,7 @@ def select_impacted_tests(
     # ------------------------------------------------------------------
     # STEP 1: Determine coverage-map freshness.
     # ------------------------------------------------------------------
-    map_stale = _coverage_map_is_stale(conn, resolved_now)
+    freshness = _coverage_map_freshness(conn, resolved_now)
 
     # ------------------------------------------------------------------
     # STEP 2: For each changed symbol, look up its tests.
@@ -154,9 +167,10 @@ def select_impacted_tests(
     misses: list[SymbolRef] = []
     for symbol in impact.changed_symbols:
         qname = symbol.qualified_name
-        # Blanket fallback: if the map itself is stale, or we have no base
-        # SHA to key the cache on, no per-row lookup can be trusted.
-        if map_stale or base_sha is None:
+        # Blanket fallback: if the map itself is missing or stale, or we
+        # have no base SHA to key the cache on, no per-row lookup can be
+        # trusted.
+        if freshness != "fresh" or base_sha is None:
             misses.append(symbol)
             continue
         row_node_ids = _lookup_coverage_row(conn, qname, base_sha)
@@ -166,10 +180,18 @@ def select_impacted_tests(
         hits[qname] = row_node_ids
 
     # ------------------------------------------------------------------
-    # STEP 3: If any symbol fell back OR the freshest row is stale,
-    # mark the whole selection stale (Requirement 1.3).
+    # STEP 3: Classify the map that backed this selection (Requirement
+    # 1.4). An empty map is ``missing``; an old map, or any symbol that
+    # fell back, is ``stale``. ``coverage_map_stale`` is derived from the
+    # state, so it keeps its previous-release value (Requirement 1.3).
     # ------------------------------------------------------------------
-    stale = map_stale or bool(misses)
+    state: CoverageMapState
+    if freshness == "missing":
+        state = "missing"
+    elif freshness == "stale" or misses:
+        state = "stale"
+    else:
+        state = "present"
 
     # ------------------------------------------------------------------
     # STEP 4: Filename heuristic for the miss set (Requirement 1.2).
@@ -195,10 +217,11 @@ def select_impacted_tests(
 
     return SelectedTests(
         node_ids=tuple(sorted(node_id_union)),
-        coverage_map_stale=stale,
+        coverage_map_stale=state != "present",
         fallback_reasons=tuple(
             f"{symbol.qualified_name}: no coverage-map row" for symbol in misses
         ),
+        coverage_map_state=state,
     )
 
 
@@ -207,13 +230,19 @@ def select_impacted_tests(
 # ---------------------------------------------------------------------------
 
 
-def _coverage_map_is_stale(conn: sqlite3.Connection, now: datetime) -> bool:
-    """Return ``True`` when the freshest coverage-map row is missing or old.
+def _coverage_map_freshness(conn: sqlite3.Connection, now: datetime) -> _MapFreshness:
+    """Classify the coverage map by its freshest ``built_at`` row.
 
-    Implements Step 1 of ``design.md §6``. An empty ``coverage_map`` table —
-    no full-suite build has ever completed — counts as stale, because there
-    is nothing to trust. Otherwise the freshest ``built_at`` is parsed as
-    ISO-8601 and compared against :data:`_COVERAGE_MAP_MAX_AGE`.
+    Implements Step 1 of ``design.md §6``. Returns:
+
+    * ``"missing"`` for an empty ``coverage_map`` table: no full-suite build
+      has ever completed, so there is nothing to trust.
+    * ``"stale"`` when the freshest ``built_at``, parsed as ISO-8601, is more
+      than :data:`_COVERAGE_MAP_MAX_AGE` behind ``now``.
+    * ``"fresh"`` otherwise.
+
+    Per-symbol misses are not visible here; the caller folds them in when it
+    turns this result into a :data:`CoverageMapState`.
 
     Every failure mode of this helper is wrapped in
     :class:`TestSelectionError`: SQLite errors on the ``MAX(built_at)``
@@ -232,7 +261,7 @@ def _coverage_map_is_stale(conn: sqlite3.Connection, now: datetime) -> bool:
     if row is None or row[0] is None:
         # No coverage-map rows at all — the caller has never run
         # ``trikon coverage build``, or its last build failed and rolled back.
-        return True
+        return "missing"
 
     freshest_iso = row[0]
     if not isinstance(freshest_iso, str):
@@ -256,7 +285,9 @@ def _coverage_map_is_stale(conn: sqlite3.Connection, now: datetime) -> bool:
     if freshest.tzinfo is None:
         freshest = freshest.replace(tzinfo=UTC)
 
-    return (now - freshest) > _COVERAGE_MAP_MAX_AGE
+    if (now - freshest) > _COVERAGE_MAP_MAX_AGE:
+        return "stale"
+    return "fresh"
 
 
 def _lookup_coverage_row(

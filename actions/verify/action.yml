@@ -16,9 +16,14 @@ inputs:
     required: false
     default: "."
   no-sandbox:
-    description: Run trikon in --no-sandbox mode (host subprocess, no Docker isolation). Set to "true" if the action runs on a runner without Docker-in-Docker support.
+    description: >-
+      Run trikon in --no-sandbox mode (subprocesses inside the ephemeral action container, no extra Docker
+      isolation). Default "true", because sandbox mode does not work on GitHub-hosted runners: it starts the
+      sandbox through the runner's Docker socket and bind-mounts the repo by its in-container path
+      (/github/workspace), which the host daemon cannot resolve, so every run fails closed to `require_human`.
+      Set "false" only on runners where that path exists on the Docker host (for example some self-hosted runners).
     required: false
-    default: "false"
+    default: "true"
   fail-on:
     description: Comma-separated list of decisions that cause the action to exit non-zero. Default `block` — the action fails only on hard blocks. Set to `block,require_human` for stricter gating.
     required: false

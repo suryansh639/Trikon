@@ -14,6 +14,7 @@ the SDK boundary consumes them via :mod:`trikon.verify.runner` only.
 """
 
 from trikon.verify.errors import (
+    CollectionPassError,
     CoverageBuildError,
     PluginLoadError,
     SandboxExecError,
@@ -32,6 +33,7 @@ from trikon.verify.models import (
 from trikon.verify.sandbox import LocalDockerSandbox
 
 __all__ = [
+    "CollectionPassError",
     "CoverageBuildError",
     "CoverageBuildReport",
     "LocalDockerSandbox",

@@ -33,9 +33,10 @@ and continue executing the remaining plugins").
 
 Security invariants
 -------------------
-* **Standard-library-only imports.** The sandbox base image
-  (``suryansh639/trikon:0.4.1``) may not have the ``trikon`` package installed
-  and the shim must run against a bare ``python:3.11-slim`` layer. Everything
+* **Standard-library-only imports.** The sandbox image's system Python, which
+  runs this shim, cannot import ``trikon``: the bundled CLI lives in its own
+  venv at ``/opt/trikon`` (see ``Dockerfile.sandbox``). The shim must also run
+  against a bare ``python:3.11-slim`` layer. Everything
   the shim needs — ``importlib.util``, ``inspect``, ``json``, ``sys``,
   ``pathlib``, ``dataclasses``, ``collections.abc``, ``typing`` — is stdlib.
 

@@ -37,9 +37,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from trikon import sdk
 from trikon.change_intel.ast_indexer import index_files
+from trikon.change_intel.blast_radius import compute_impact
 from trikon.change_intel.dep_graph import DepGraph
+from trikon.change_intel.diff_parser import parse_diff
 from trikon.change_intel.models import SymbolDef
 
 if TYPE_CHECKING:
@@ -83,7 +84,7 @@ _REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 _SAMPLE_REPO: Path = _REPO_ROOT / "examples" / "sample_repo"
 
 #: Location of the ``bad_retry`` scenario patch that the always-on benchmark
-#: applies before measuring :func:`sdk.verify`.
+#: applies before measuring :func:`compute_impact`.
 _BAD_RETRY_PATCH: Path = _REPO_ROOT / "tests" / "fixtures" / "scenarios" / "bad_retry.patch"
 
 
@@ -307,17 +308,25 @@ def test_compute_impact_sample_repo(
     benchmark: BenchmarkFixture,
     tmp_path: Path,
 ) -> None:
-    """``sdk.verify`` on the ``bad_retry`` scenario — target ≤ 200 ms.
+    """``compute_impact`` on the ``bad_retry`` scenario — target ≤ 200 ms.
 
     The git-history setup (``init`` + baseline commit + ``git apply`` +
-    applied commit) is one-shot and lives outside the timed section. Every
-    round starts from a fresh :class:`~pathlib.Path` for ``cache_db`` so
-    the benchmark measures the cold ``sdk.verify`` path — cache warmup
-    lands in benchmark #2.
+    applied commit) and :func:`parse_diff` are one-shot and live outside
+    the timed section; the resulting :class:`ChangeSet` is frozen, so every
+    round reuses it. Every round starts from a fresh :class:`~pathlib.Path`
+    for ``cache_db`` so the benchmark measures the cold ``compute_impact``
+    path — cache warmup lands in benchmark #2.
+
+    The benchmark times ``compute_impact`` alone, as Requirement 7.3
+    states, and never reaches the verification runner. Its result therefore
+    does not depend on whether a Docker daemon or the sandbox image is
+    available: the PR ``perf`` job (Docker present) and a Windows run
+    without Docker time and check the same code path.
 
     Validates: Requirements 7.3.
     """
     repo, baseline_sha, applied_sha, _ = _prepare_sample_repo(tmp_path)
+    change_set = parse_diff(repo, base_sha=baseline_sha, head_sha=applied_sha)
 
     round_index = {"n": 0}
 
@@ -328,16 +337,13 @@ def test_compute_impact_sample_repo(
         return (), {"cache_db": cache_db}
 
     def _target(*, cache_db: Path) -> None:
-        verdict = sdk.verify(
-            repo_path=repo,
-            base_sha=baseline_sha,
-            head_sha=applied_sha,
-            cache_db=cache_db,
-        )
-        # The verdict shape assertion belongs in the integration test suite,
-        # not the perf gate. A single sanity check keeps a broken pipeline
-        # from silently posting fast timings from a fail-closed path.
-        assert verdict.decision == "require_human"
+        impact = compute_impact(change_set, repo, cache_db=cache_db)
+        # The full ImpactSet assertions belong in the integration suite, not
+        # the perf gate. This sanity check keeps a pipeline that indexes
+        # nothing from posting fast timings.
+        assert impact.changed_files == ["src/payments/retry.py"]
+        changed_names = {s.qualified_name for s in impact.changed_symbols}
+        assert "payments.retry.with_backoff" in changed_names
 
     benchmark.pedantic(_target, setup=_setup, rounds=3, iterations=1)
 

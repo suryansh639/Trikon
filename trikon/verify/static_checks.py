@@ -583,7 +583,7 @@ def _resolve_base_keys(
             changed_files=changed_files,
         )
     finally:
-        _remove_worktree(worktree_dir)
+        _remove_worktree(repo_path, worktree_dir)
 
     # Persist. The ``UNIQUE(base_sha, tool, tool_version)`` constraint
     # from Task 3.1 makes tool-version bumps invalidate the cache row
@@ -718,7 +718,7 @@ def _add_worktree(repo_path: Path, base_sha: str) -> Path:
     return tmp
 
 
-def _remove_worktree(worktree_dir: Path) -> None:
+def _remove_worktree(repo_path: Path, worktree_dir: Path) -> None:
     """Best-effort teardown of a worktree created by :func:`_add_worktree`.
 
     Runs ``git worktree remove --force <dir>`` and swallows the outcome:
@@ -729,11 +729,18 @@ def _remove_worktree(worktree_dir: Path) -> None:
     not mask the primary error path back in :func:`_resolve_base_keys`.
 
     Args:
+        repo_path: The repository the worktree was added to, i.e. the
+            same ``repo_path`` passed to :func:`_add_worktree`. Passed
+            as ``cwd`` for the same reason: run from the process's
+            working directory, git looks up the wrong repository (or
+            none), exits 128 and leaves both the directory and the
+            ``.git/worktrees`` entry behind.
         worktree_dir: The path returned by :func:`_add_worktree`.
     """
     try:
         result = subprocess.run(
             ["git", "worktree", "remove", "--force", str(worktree_dir)],
+            cwd=str(repo_path),
             capture_output=True,
             text=True,
             timeout=_GIT_WORKTREE_TIMEOUT_SECONDS,

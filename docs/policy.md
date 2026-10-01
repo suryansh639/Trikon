@@ -1,6 +1,6 @@
 # Policy Engine — Engineer's Walkthrough
 
-Phase 3 of Trikon reads your `.trikon/policy.yaml`, grades the change against the evidence Phases 1 and 2 gathered, and emits the terminal `Verdict` — a real `decision`, a real `matched_rule`, a real `reason`, an accumulated `warnings` list, and a decision-based process exit code that a CI job can gate on directly.
+Phase 3 of Trikon reads your `.trikon/policy.yaml`, grades the change against the evidence Phases 1 and 2 gathered, applies the non-overridable [Safety_Floor](#the-safety_floor), and emits the terminal `Verdict` — a real `decision`, a real `matched_rule`, a real `reason`, an accumulated `warnings` list, and a decision-based process exit code that a CI job can gate on directly.
 
 For the frozen contract, see [`../.kiro/specs/policy-engine/design.md`](../.kiro/specs/policy-engine/design.md). Phase-1 context (how `ImpactSet` is built) lives in [`change_intel.md`](change_intel.md); Phase-2 context (how `VerificationReport` is built) lives in [`verification.md`](verification.md). The policy engine consumes both verbatim.
 
@@ -21,7 +21,10 @@ load_policy(repo, policy_path)
 evaluate_policy(policy, change, verification)
         │  first-match-terminal + warn accumulation
         ▼
-      Verdict  (decision, matched_rule, reason, warnings, schema_version=2)
+floor_verdict(verdict, is_python_change=…)
+        │  Safety_Floor: can only turn allow into block / require_human
+        ▼
+      Verdict  (decision, matched_rule, reason, warnings, schema_version=3)
         │
         ├──▶ audit_log.record_verdict(conn, verdict)   ── append-only INSERT
         │
@@ -31,7 +34,7 @@ evaluate_policy(policy, change, verification)
               trikon verify  (exit 0 / 1 / 2 by decision)
 ```
 
-Every stage has a single, well-typed entry point. Every stage can fail; every failure raises a subclass of `PolicyEvaluationError`. `PolicyEvaluationError` is a `TrikonError`, so the SDK boundary already catching `ChangeIntelError` and `VerificationRunnerError` collapses to a single `except TrikonError` clause. On any caught error, `sdk.verify` returns `require_human` with `EMPTY_IMPACT_SET` and `EMPTY_VERIFICATION` sentinels — never `allow`. See [`../.kiro/specs/policy-engine/design.md`](../.kiro/specs/policy-engine/design.md) §10 and §13.
+Every stage has a single, well-typed entry point. Every stage can fail; every failure raises a subclass of `PolicyEvaluationError`. `PolicyEvaluationError` is a `TrikonError`, so the SDK boundary already catching `ChangeIntelError` and `VerificationRunnerError` collapses to a single `except TrikonError` clause. On any caught error, `sdk.verify` returns `require_human` — never `allow`. Stages that finished keep their evidence; the rest fall back to the `EMPTY_IMPACT_SET` and `EMPTY_VERIFICATION` sentinels, and a computed `ImportReport` is kept even when verification did not finish. See [`../.kiro/specs/policy-engine/design.md`](../.kiro/specs/policy-engine/design.md) §10 and §13.
 
 ## The policy file
 
@@ -67,9 +70,9 @@ rules:
 
 Every rule has a `name` (unique), an optional `when` clause (empty `when` matches every input), a required `then` decision, and an optional `reason` string that flows through to `Verdict.reason` or `Verdict.warnings`.
 
-## The five condition types
+## The condition types
 
-Every `when` key routes to one of five inline matchers in `trikon.policy.evaluator._rule_matches`. Multiple keys inside the same `when` are ANDed — every condition must match for the rule to fire (Requirement 1.6). An empty `when` (`{}`) matches unconditionally (Requirement 1.7). Any key outside the five below raises `RuleMatchError`, which fail-closes at the SDK boundary.
+Every `when` key routes to an inline matcher in `trikon.policy.evaluator._conditions_match`. Multiple keys inside the same `when` are ANDed — every condition must match for the rule to fire (Requirement 1.6). An empty `when` (`{}`) matches unconditionally (Requirement 1.7). Any key outside the ones below, or a value of the wrong shape, raises `RuleMatchError`, which fail-closes at the SDK boundary. The five original keys come first; the [test-evidence, import, Python-change and `any_of` keys](#test-evidence-import-and-python-change-keys) follow. The policy `version` stays `1`: the new keys are additive and no existing key changed its meaning.
 
 ### `any_path_matches`
 
@@ -137,6 +140,39 @@ Counts entries in `verification.static.findings` with `is_new == true` (findings
   reason: "Change introduced new static-analysis errors."
 ```
 
+### Test-evidence, import and Python-change keys
+
+These keys read the fields the [verification runner](verification.md#the-test-stage) and the import checker record on every `VerificationReport`. Integer keys take the same single-operator dict as `verification.static.new_errors` (`eq`, `gt` or `lt`). Boolean keys accept only YAML `true` / `false`, not `1` / `0`.
+
+| Key | Value | Matches when |
+| --- | ----- | ------------ |
+| `verification.tests.executed` | `{eq\|gt\|lt: N}` | `tests.passed + tests.failed` compares to `N`. Computed from the outcomes, not read from the stored `executed` field. |
+| `verification.tests.total` | `{eq\|gt\|lt: N}` | `tests.total` compares to `N`. |
+| `verification.tests.strategy` | `selected` \| `full_suite` \| `none` | `tests.strategy` equals the value. |
+| `verification.tests.incomplete` | `true` \| `false` | `tests.incomplete` equals the value (a timeout or a collection error not caused by the change). |
+| `verification.imports.broken` | `{eq\|gt\|lt: N}` | The number of broken imports (`len(imports.broken)`) compares to `N`. |
+| `verification.imports.incomplete` | `true` \| `false` | `imports.incomplete` equals the value (a file the import checker could not parse). |
+| `change.python_change` | `true` \| `false` | Whether any changed path, old or new, is a Python file. |
+
+### `any_of`
+
+OR inside one rule. The value is a non-empty list of non-empty `when` mappings; `any_of` matches when at least one mapping matches under the usual AND semantics. Mappings may nest another `any_of`. Evaluation short-circuits on the first match. An empty list, an empty mapping or a non-mapping entry raises `RuleMatchError`.
+
+```yaml
+- name: "insufficient test evidence requires human"
+  when:
+    change.python_change: true
+    any_of:
+      - verification.tests.executed:
+          eq: 0
+      - verification.tests.incomplete: true
+      - verification.imports.incomplete: true
+  then: require_human
+  reason: "Python change without complete test or import evidence."
+```
+
+A previous-release engine that reads a policy using any of these keys raises `RuleMatchError` on the unknown key and fails closed, so a condition is never silently ignored.
+
 ## The four `then` values
 
 Three terminal, one non-terminal:
@@ -154,46 +190,55 @@ Three terminal, one non-terminal:
 
 **Fall-through.** When no terminal rule matches, `decision = "require_human"`, `matched_rule = None`, and `reason = "No rule matched; defaulting to require_human."`. The shipped default policy ends with an unconditional `require_human` rule so this fall-through only fires against custom policies missing a terminal.
 
-**Every rule leaves a trace.** `verdict.evidence.policy_results` contains exactly one `RuleResult` per rule in the input `Policy.rules`, in declaration order — `matched`, `would_emit`, and `reason` populated for every rule regardless of whether it fired (Requirement 3.4).
+**Every rule leaves a trace.** `verdict.evidence.policy_results` contains exactly one `RuleResult` per rule in the input `Policy.rules`, in declaration order — `matched`, `would_emit`, and `reason` populated for every rule regardless of whether it fired (Requirement 3.4). When the [Safety_Floor](#the-safety_floor) changes the decision, it appends one more `RuleResult` for its own rule.
+
+## The Safety_Floor
+
+`trikon.policy.floor.floor_verdict` runs after `evaluate_policy` and before the audit write, on every policy verdict. It takes no `Policy` argument, so no policy setting can disable it, and a custom allow-everything policy is floored exactly like the default. It only ever changes `allow`; `block` and `require_human` pass through with their `matched_rule` and `reason` untouched. The checks, in order:
+
+| Order | Condition (only when the policy decided `allow`) | Decision | `matched_rule` |
+| ----- | ------------------------------------------------ | -------- | -------------- |
+| 1 | The `ImportReport` holds at least one broken import. | `block` | `safety_floor.broken_imports` |
+| 2 | A Python change with 0 executed tests (`passed + failed`), an incomplete `TestReport`, or an incomplete `ImportReport`. | `require_human` | `safety_floor.insufficient_evidence` |
+
+Broken imports are checked first, so `block` wins when an evidence gap holds too. A floored Verdict's `reason` names the floor condition and the policy's original decision and rule, for example `Safety floor safety_floor.broken_imports: 2 broken import(s); first tests/test_worker.py:6 -> orders.worker.PaymentJob. Policy decided 'allow' via rule '…' (…).` `audit_id`, `created_at`, `warnings` and `schema_version` carry over unchanged. A floored decision is never `allow`, so applying the floor twice gives the same Verdict as applying it once.
+
+The default policy already encodes both floor conditions (rules 1 and 6 below), so with the default policy the floor never has to step in. It exists for custom policies that would otherwise allow a change with broken imports or no test evidence.
 
 ## Missing-file fallback
 
-When `<repo>/.trikon/policy.yaml` does not exist, `load_policy` returns `default_policy()` — the same 6-rule policy shipped inside the wheel at `trikon/policy/default_policy.yaml`, resolved via `importlib.resources.files("trikon.policy") / "default_policy.yaml"`. Requirement 2.2 makes this a fall-through, not an error — a repo that has not run `trikon init` still gets a conservative policy, not a raise.
+When `<repo>/.trikon/policy.yaml` does not exist, `load_policy` returns `default_policy()` — the same 8-rule policy shipped inside the wheel at `trikon/policy/default_policy.yaml`, resolved via `importlib.resources.files("trikon.policy") / "default_policy.yaml"`. Requirement 2.2 makes this a fall-through, not an error — a repo that has not run `trikon init` still gets a conservative policy, not a raise.
 
-The 6 rules, in declaration order:
+The 8 rules, in declaration order:
 
-1. **`sensitive path requires human`** — `any_path_matches: [auth/**, billing/**, payments/**, **/migrations/**]` → `require_human`.
+1. **`broken static imports`** — `verification.imports.broken: {gt: 0}` → `block`.
 2. **`impacted tests failed`** — `verification.tests.status: failed` → `block`.
 3. **`new static-analysis errors`** — `verification.static.new_errors: {gt: 0}` → `block`.
-4. **`large blast radius requires human`** — `change.blast_radius.score: HIGH` → `require_human`.
-5. **`green, low-blast auto-allow`** — `passed` tests + zero new static errors + `LOW` blast → `allow`.
-6. **`default`** — empty `when`, unconditional `require_human`.
+4. **`sensitive path requires human`** — `any_path_matches: [auth/**, billing/**, payments/**, **/migrations/**]` → `require_human`.
+5. **`large blast radius requires human`** — `change.blast_radius.score: HIGH` → `require_human`.
+6. **`insufficient test evidence requires human`** — `change.python_change: true` plus `any_of` (`verification.tests.executed: {eq: 0}`, `verification.tests.incomplete: true`, `verification.imports.incomplete: true`) → `require_human`.
+7. **`green, low-blast auto-allow`** — `passed` tests + zero new static errors + `LOW` blast → `allow`.
+8. **`default`** — empty `when`, unconditional `require_human`.
+
+The three `block` rules run before the sensitive-path rule, so a sensitive change that breaks imports or tests, or adds static errors, is blocked rather than routed to a human. The same rules ship in [`../examples/policies/default.yaml`](../examples/policies/default.yaml) and [`../examples/sample_repo/.trikon/policy.yaml`](../examples/sample_repo/.trikon/policy.yaml); a unit test keeps the three files in sync.
 
 Malformed YAML, an empty file, a `pydantic.ValidationError`, or an `OSError` on read all surface as `PolicyLoadError` with the original exception on `__cause__` — the SDK boundary translates that into `require_human` and writes an audit row before returning.
 
 ## Expected `Verdict` for sample scenarios
 
-All three scenarios below run against [`../examples/sample_repo/`](../examples/sample_repo/) with its policy at [`../examples/sample_repo/.trikon/policy.yaml`](../examples/sample_repo/.trikon/policy.yaml). Patches live in [`../tests/fixtures/scenarios/`](../tests/fixtures/scenarios/).
+All five scenarios below run against [`../examples/sample_repo/`](../examples/sample_repo/) with its policy at [`../examples/sample_repo/.trikon/policy.yaml`](../examples/sample_repo/.trikon/policy.yaml) (the same 8 rules as the default). Patches live in [`../tests/fixtures/scenarios/`](../tests/fixtures/scenarios/), and `tests/integration/change_intel/test_end_to_end_sample_repo.py` pins these outcomes. Each run starts from an empty state DB, so there is no coverage map and every Python change runs the full suite (10 tests) after the collection pass. In every scenario the decision comes from a policy rule; the Safety_Floor never has to step in.
 
-### `bad_retry` → `block`
-
-Retiming `payments.retry.with_backoff` fans out to the whole payments/orders/api graph. Tests fail, blast is `HIGH`. Rule 1 (`sensitive path requires human`) is scoped to `payments/**` in this repo's policy, which does not match `src/payments/retry.py` under `PurePosixPath.match` right-anchor semantics; rule 2 (`impacted tests failed`) fires first:
-
-```json
-{
-  "decision": "block",
-  "matched_rule": "impacted tests failed",
-  "reason": "One or more impacted tests failed.",
-  "warnings": [],
-  "schema_version": 2
-}
-```
-
-Process exit code: `1`.
+| Scenario | Change | Decision | `matched_rule` | Exit code |
+| -------- | ------ | -------- | -------------- | --------- |
+| `clean_refactor` | Extract a private helper in `src/orders/worker.py` | `allow` | `green, low-blast auto-allow` | `0` |
+| `bad_retry` | Retime `payments.retry.with_backoff` | `block` | `impacted tests failed` | `1` |
+| `sensitive_touch` | Add a `currency` field to `payments.gateway.charge` | `require_human` | `sensitive path requires human` | `2` |
+| `no_python_change` | Edit `README.md` only | `allow` | `green, low-blast auto-allow` | `0` |
+| `deleted_file` | Delete `src/orders/worker.py` | `block` | `broken static imports` | `1` |
 
 ### `clean_refactor` → `allow`
 
-Extracting a private helper in `orders.worker`. `LOW` blast, tests pass, no new static errors. Rules 1-4 miss; rule 5 (`green, low-blast auto-allow`) fires:
+`LOW` blast, all 10 tests pass, no new static errors. Rules 1-6 miss (rule 6 sees 10 executed tests and complete evidence); rule 7 fires:
 
 ```json
 {
@@ -201,15 +246,27 @@ Extracting a private helper in `orders.worker`. `LOW` blast, tests pass, no new 
   "matched_rule": "green, low-blast auto-allow",
   "reason": "Tests passed, no new static errors, small blast radius.",
   "warnings": [],
-  "schema_version": 2
+  "schema_version": 3
 }
 ```
 
-Process exit code: `0`.
+### `bad_retry` → `block`
 
-### `sensitive` (patch under `payments/`) → `require_human`
+`tests/test_retry.py::test_retries_until_success` fails (9 passed, 1 failed). The change also touches `src/payments/`, but rule 2 (`impacted tests failed`) runs before rule 4 (`sensitive path requires human`), so a sensitive change that fails tests is blocked:
 
-Any change touching a file under the repo's `sensitive_paths` glob — e.g. adding a `currency` field to `payments.gateway.charge` — matches rule 1 before any verification-based rule can:
+```json
+{
+  "decision": "block",
+  "matched_rule": "impacted tests failed",
+  "reason": "One or more impacted tests failed.",
+  "warnings": [],
+  "schema_version": 3
+}
+```
+
+### `sensitive_touch` → `require_human`
+
+All 10 tests pass and no static errors are new, so rules 1-3 miss. `src/payments/gateway.py` matches the `payments/**` glob in rule 4:
 
 ```json
 {
@@ -217,11 +274,31 @@ Any change touching a file under the repo's `sensitive_paths` glob — e.g. addi
   "matched_rule": "sensitive path requires human",
   "reason": "Change touches a sensitive subsystem.",
   "warnings": [],
-  "schema_version": 2
+  "schema_version": 3
 }
 ```
 
-Process exit code: `2`. The rule fires regardless of `verification.tests.status` — a green sensitive-path change still requires a human, and that is by design.
+A green sensitive-path change still requires a human, and that is by design.
+
+### `no_python_change` → `allow`
+
+Only `README.md` changes, so the test strategy is `none`: no test run starts and the `TestReport` is `passed` with zero counts. Rule 6 misses because `change.python_change` is false, and rule 7 fires with the same `matched_rule` and `reason` as `clean_refactor`. The Safety_Floor's evidence check does not apply either, because no Python file changed.
+
+### `deleted_file` → `block`
+
+`tests/test_worker.py:6` still runs `from orders.worker import PaymentJob, PaymentWorker`. The import checker records two `removed_module` broken imports, and rule 1 fires:
+
+```json
+{
+  "decision": "block",
+  "matched_rule": "broken static imports",
+  "reason": "Change leaves static imports of removed modules or names.",
+  "warnings": [],
+  "schema_version": 3
+}
+```
+
+The same test file is an attributable collection error in the full-suite run (8 tests collected and passed), which also makes `verification.tests.status` `failed`.
 
 ## Audit log
 
@@ -242,7 +319,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_decision   ON audit_log(decision);
 ```
 
-`verdict_json` is `verdict.model_dump_json()` at `schema_version=2` — the lossless serialization. Given an `audit_id`, `SELECT verdict_json FROM audit_log WHERE audit_id = ?` reproduces the exact returned Verdict.
+`verdict_json` is `verdict.model_dump_json()` at `schema_version=3` — the lossless serialization. Rows written by the previous release keep `"schema_version": 2` and still parse; the fields added in version 3 take their defaults. Given an `audit_id`, `SELECT verdict_json FROM audit_log WHERE audit_id = ?` reproduces the exact returned Verdict.
 
 **Append-only by construction.** The `trikon.audit_log` module exports exactly two names — `ensure_audit_tables` and `record_verdict` — and only ever emits `INSERT` after the initial `CREATE TABLE IF NOT EXISTS`. No `UPDATE`, no `DELETE`, no `DROP`, no `ALTER`, no `TRUNCATE`. A static AST scan in `tests/unit/audit_log/test_append_only_closure.py` pins this closure.
 
@@ -269,7 +346,7 @@ The command reads the packaged `default_policy.yaml` (via `importlib.resources`)
 | Missing packaged resource (broken wheel) | 1 |
 | Typer usage error | 2 |
 
-A fresh `trikon init` followed by `trikon verify` runs the same policy the missing-file fallback would have — the two paths converge on the same 6 rules.
+A fresh `trikon init` followed by `trikon verify` runs the same policy the missing-file fallback would have — the two paths converge on the same 8 rules.
 
 ## `trikon verify`
 
@@ -308,4 +385,4 @@ The Phase-2 diagnostic surface `trikon debug verify` is preserved and always exi
 - [`verification.md`](verification.md) — how the `VerificationReport` the policy engine grades is produced.
 - [`policy_dsl.md`](policy_dsl.md) — the compact DSL reference for authoring `.trikon/policy.yaml`.
 - [`../examples/sample_repo/.trikon/policy.yaml`](../examples/sample_repo/.trikon/policy.yaml) — the reference policy exercised by the integration tests.
-- [`../tests/fixtures/scenarios/`](../tests/fixtures/scenarios/) — the reference patches that drive the three scenarios above.
+- [`../tests/fixtures/scenarios/`](../tests/fixtures/scenarios/) — the reference patches that drive the five scenarios above.

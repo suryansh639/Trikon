@@ -28,8 +28,9 @@ Tables created here:
     this carries the failing exception class name plus message so audit
     reviewers can see the cause of ``require_human`` verdicts.
   - ``verdict_json TEXT NOT NULL`` — full ``verdict.model_dump_json()``
-    at ``schema_version == 2``. Lossless record; every other column is a
-    projection maintained for query performance.
+    at the emitting build's ``schema_version`` (currently 3; rows written
+    by older builds keep their own value). Lossless record; every other
+    column is a projection maintained for query performance.
 
 Additive-only invariant
 -----------------------

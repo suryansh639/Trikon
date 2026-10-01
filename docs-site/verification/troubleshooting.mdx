@@ -83,7 +83,7 @@ If the same plugin repeatedly times out, prefer option 1. A slow plugin taxes ev
 
 ## Sandbox exceeded 5-minute deadline
 
-**Symptom.** `TestReport.status="failed"` with exactly one `TestResult`:
+**Symptom.** `TestReport.incomplete=true` with `"execution_timeout"` in `incomplete_reasons`, and this entry appended to `failures` (it is not counted as a failed test):
 
 ```json
 {
@@ -99,7 +99,7 @@ If the same plugin repeatedly times out, prefer option 1. A slow plugin taxes ev
 - A repo whose dev-dependency install (`pip install --no-deps -e .[dev]`) takes longer than the cold budget allows on a slow disk or network.
 - An integration test suite that assumes a running database and blocks on `psycopg2.connect`.
 
-The synthesized `errored` TestResult means the runner detected the timeout and returned normally — it did not raise past the module boundary. The SDK still produces a Verdict; the decision is `require_human` because the tests did not actually finish.
+The runner detected the timeout and returned normally — it did not raise past the module boundary. `TestReport.status` is `failed` if a test had already failed and `skipped` otherwise. A Collection_Pass timeout skips execution and records `"collection_timeout"` instead. The SDK still produces a Verdict, and it is never `allow`: incomplete evidence routes a Python change to `require_human` (the default policy's `insufficient test evidence requires human` rule, backed by the Safety_Floor), and on the Docker backend the killed container makes the static stage fail, so the SDK fails closed to `require_human`.
 
 **Fix.** Investigate what was running when the deadline elapsed:
 
@@ -113,14 +113,14 @@ The synthesized `errored` TestResult means the runner detected the timeout and r
 **Symptom.** A verdict where the policy declared a `network_allowlist` but a test appeared to reach an off-allowlist host successfully — or a container log showing an unrestricted `curl` call succeeding.
 
 <Warning>
-  **Phase 2 warning.** The network-allowlist branch of the sandbox is behind a warning while the iptables sidecar is hardened. Do not rely on it to gate production egress until Phase 3 flips the invariant. Until then, treat any verdict that requires network access as `require_human` regardless of what the allowlist appears to permit.
+  **Not enforced yet.** The network-allowlist branch of the sandbox is behind a warning while the iptables sidecar is hardened. Do not rely on it to gate production egress until enforcement ships. Until then, treat any verdict that requires network access as `require_human` regardless of what the allowlist appears to permit.
 </Warning>
 
 **Cause.** The Phase 2 implementation creates the dedicated Docker bridge network, attaches the container to it, and installs the iptables rules — but the containers-only netns iptables path has known gaps on rootless Docker and on hosts where `iptables-nft` and `iptables-legacy` are both installed. The safe default in Phase 2 is `network_mode="none"`.
 
 **Fix.**
 
-- Wait for Phase 3, which lands hardened allowlist enforcement and the corresponding CI check.
+- Wait for hardened allowlist enforcement and the corresponding CI check. They did not ship with the Phase 3 policy engine.
 - Until then, either scope the affected test to a `network_mode="none"` fake (via `responses`, `httpretty`, or an in-repo fixture) or move the network-dependent test out of the verified suite.
 - If you have a compelling need for early access to the allowlist branch, treat verdicts that require it as `require_human` in your policy and gate merge on manual review.
 
@@ -136,8 +136,8 @@ Attach `/tmp/verdict.json` and the output of:
 
 ```bash
 docker info
-docker image inspect trikon/sandbox:0.1.0 --format '{{ .Id }}'
-trikon version
+docker image inspect suryansh639/trikon:<version> --format '{{ .Id }}'
+trikon --version
 ```
 
 ## Related

@@ -1,0 +1,115 @@
+{
+  "decision": "require_human",
+  "reason": "Change touches a sensitive subsystem.",
+  "matched_rule": "sensitive path requires human",
+  "evidence": {
+    "change": {
+      "changed_files": [
+        "src/payments/retry.py"
+      ],
+      "changed_symbols": [
+        {
+          "qualified_name": "payments.retry.with_backoff",
+          "file_path": "src/payments/retry.py",
+          "kind": "function"
+        }
+      ],
+      "impacted_modules": [
+        "payments"
+      ],
+      "impacted_public_apis": [
+        {
+          "qualified_name": "payments.retry.with_backoff",
+          "file_path": "src/payments/retry.py",
+          "kind": "function"
+        }
+      ],
+      "impacted_tests": [
+        "tests/test_retry.py"
+      ],
+      "blast_radius_score": "MEDIUM",
+      "blast_radius_numeric": 9.5,
+      "file_changes": [
+        {
+          "path": "src/payments/retry.py",
+          "change_kind": "modified",
+          "old_path": null
+        }
+      ]
+    },
+    "verification": {
+      "tests": {
+        "status": "failed",
+        "total": 3,
+        "passed": 2,
+        "failed": 1,
+        "skipped": 0,
+        "duration_ms": 0,
+        "failures": [
+          {
+            "node_id": "tests/test_retry.py::test_retries_until_success",
+            "outcome": "failed",
+            "duration_ms": 0,
+            "failure_summary": "assert [3.02, 3.02] == [0.02, 0.02]\n  \n  At index 0 diff: 3.02 != 0.02\n  Use -v to get more diff"
+          }
+        ],
+        "coverage_map_stale": true
+      },
+      "static": {
+        "tools_run": [
+          "ruff",
+          "mypy"
+        ],
+        "new_errors": 0,
+        "new_warnings": 0,
+        "preexisting_errors": 0,
+        "findings": []
+      },
+      "plugins": [],
+      "sandbox_ms": 11492,
+      "total_ms": 11518
+    },
+    "policy_results": [
+      {
+        "rule_name": "sensitive path requires human",
+        "matched": true,
+        "would_emit": "require_human",
+        "reason": "Change touches a sensitive subsystem."
+      },
+      {
+        "rule_name": "impacted tests failed",
+        "matched": true,
+        "would_emit": "block",
+        "reason": "One or more impacted tests failed."
+      },
+      {
+        "rule_name": "new static-analysis errors",
+        "matched": false,
+        "would_emit": null,
+        "reason": "Change introduced new static-analysis errors."
+      },
+      {
+        "rule_name": "large blast radius requires human",
+        "matched": false,
+        "would_emit": null,
+        "reason": "Blast radius is HIGH; a human should review scope."
+      },
+      {
+        "rule_name": "green, low-blast auto-allow",
+        "matched": false,
+        "would_emit": null,
+        "reason": "Tests passed, no new static errors, small blast radius."
+      },
+      {
+        "rule_name": "default",
+        "matched": true,
+        "would_emit": "require_human",
+        "reason": "No prior rule matched; defaulting to human review."
+      }
+    ]
+  },
+  "audit_id": "ed12126a-cdf2-4823-bf77-158742479b93",
+  "created_at": "2026-09-29T05:40:17.851118Z",
+  "warnings": [],
+  "schema_version": 2
+}
