@@ -6,7 +6,7 @@ description: "How Trikon decides which tests actually matter for a given change.
 Blast radius is Trikon's answer to *"what does this change affect?"*. It powers targeted test execution, focus recommendations to reviewers, and the numeric score that policies read.
 
 <Note>
-  **Phase 1 status.** Change intelligence is the first shipping subsystem. The pipeline below (`parse_diff` → `ImpactSet`) is live behind the `trikon debug impact` CLI. The verification runner, policy engine, and full `trikon verify` command land in Phase 2 — until then, `sdk.verify()` always returns `require_human` because there is no verification evidence to grade yet. See the [engineer walkthrough](https://github.com/suryansh639/Trikon/blob/main/docs/change_intel.md) on GitHub for the module-level tour.
+  **Phase 1 status.** Change intelligence is the first shipping subsystem. The pipeline below (`parse_diff` → `ImpactSet`) is live behind the `trikon debug impact` CLI. The [verification runner](/verification/overview), the [policy engine](/policy/overview) and the full `trikon verify` command have shipped too, so `sdk.verify()` returns policy-driven verdicts, followed by a non-overridable Safety_Floor, and the blast-radius bucket feeds `change.blast_radius.score` rules. See the [engineer walkthrough](https://github.com/suryansh639/Trikon/blob/main/docs/change_intel.md) on GitHub for the module-level tour.
 </Note>
 
 ## The pipeline

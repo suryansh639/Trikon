@@ -1,6 +1,6 @@
 ---
 title: "Policy Authoring"
-description: "Write .trikon/policy.yaml rules against the full DSL — five condition types, four then values, first-match-terminal semantics, warn accumulation, and the require_human fall-through."
+description: "Write .trikon/policy.yaml rules against the full DSL — condition types, any_of, four then values, first-match-terminal semantics, warn accumulation, and the require_human fall-through."
 ---
 
 Every rule in `.trikon/policy.yaml` is a `when` clause that inspects the evidence, and a `then` value that says what to do when the clause matches. This page is the full reference for both sides.
@@ -35,9 +35,9 @@ The [`Policy`](/concepts/policy-dsl) Pydantic model rejects unknown top-level fi
 | `then` | `Decision` | yes | One of `allow`, `block`, `require_human`, `warn`. |
 | `reason` | `str \| None` | no | Free-text explanation. Surfaced as `verdict.reason` on match; synthesized default when omitted. |
 
-## The five condition types
+## The condition types
 
-Every key inside `when:` must be one of the five listed below. Unknown keys raise [`RuleMatchError`](/policy/troubleshooting#unknown-condition-key) — the evaluator refuses to guess.
+Every key inside `when:` must be one of the keys listed below: the five original condition types, then the test-evidence, import, Python-change and `any_of` keys. Unknown keys raise [`RuleMatchError`](/policy/troubleshooting#unknown-condition-key) — the evaluator refuses to guess.
 
 ### `any_path_matches: [glob, …]`
 
@@ -99,7 +99,7 @@ Literal string equality against `verification.tests.status`.
   reason: "One or more impacted tests failed."
 ```
 
-`passed` means every impacted test passed. `failed` means at least one impacted test failed. `skipped` means the runner had nothing to execute (empty impacted set, or a coverage-map miss with no filename-heuristic hits).
+`passed` means tests ran and none failed, or the change touched no Python file and no test run was needed (strategy `none`). `failed` means at least one executed test failed, or a collection error the change caused. `skipped` means a Python change executed no test, for example after a timeout. A Python change with an empty selection runs the full suite rather than ending `skipped`.
 
 ### `verification.static.new_errors: {eq|gt|lt: N}`
 
@@ -119,6 +119,37 @@ Exactly one operator per condition. The three accepted operators map to `operato
 - Multi-key operator dict: `{eq: 0, gt: 5}` — reject, "expects exactly one operator".
 - Unknown operator: `{neq: 0}` — reject, "unknown operator".
 - Non-int threshold: `{eq: "zero"}` — reject, "expected int".
+
+### Test-evidence, import and Python-change keys
+
+Integer keys take the same single-operator dict as `verification.static.new_errors`. Boolean keys accept only `true` / `false`, not `1` / `0`.
+
+| Key | Value | Matches when |
+| --- | --- | --- |
+| `verification.tests.executed` | `{eq\|gt\|lt: N}` | `tests.passed + tests.failed` compares to `N` |
+| `verification.tests.total` | `{eq\|gt\|lt: N}` | `tests.total` compares to `N` |
+| `verification.tests.strategy` | `selected` \| `full_suite` \| `none` | `tests.strategy` equals the value |
+| `verification.tests.incomplete` | `true` \| `false` | `tests.incomplete` equals the value |
+| `verification.imports.broken` | `{eq\|gt\|lt: N}` | the number of broken imports compares to `N` |
+| `verification.imports.incomplete` | `true` \| `false` | `imports.incomplete` equals the value |
+| `change.python_change` | `true` \| `false` | whether any changed path, old or new, is a Python file |
+
+### `any_of: [when-mapping, …]`
+
+OR inside one rule. Matches when at least one mapping in the non-empty list matches under AND semantics. Mappings may nest. An empty list or an empty mapping raises [`RuleMatchError`](/policy/troubleshooting#unknown-condition-key).
+
+```yaml
+- name: "insufficient test evidence requires human"
+  when:
+    change.python_change: true
+    any_of:
+      - verification.tests.executed:
+          eq: 0
+      - verification.tests.incomplete: true
+      - verification.imports.incomplete: true
+  then: require_human
+  reason: "Python change without complete test or import evidence."
+```
 
 ### Multiple conditions AND together
 
@@ -180,7 +211,7 @@ The behaviour splits along one axis:
 
 ## Worked example
 
-A full six-rule policy that demonstrates every condition type, both terminal and non-terminal `then` values, and an explicit `require_human` fall-through.
+A full six-rule policy that demonstrates the five original condition types, both terminal and non-terminal `then` values, and an explicit `require_human` fall-through.
 
 ```yaml
 version: 1
@@ -275,7 +306,7 @@ The migration-only trace is the one to internalize. Rule 1 already wins on `deci
 
 ## Default policy
 
-The packaged default (`trikon/policy/default_policy.yaml`) is the six-rule shape above without the `warn on migration` rule — a conservative starting point, not an example of every DSL feature.
+The packaged default (`trikon/policy/default_policy.yaml`) has eight rules: `broken static imports`, `impacted tests failed`, `new static-analysis errors`, `sensitive path requires human`, `large blast radius requires human`, `insufficient test evidence requires human`, `green, low-blast auto-allow` and `default`. It is a conservative starting point, not an example of every DSL feature. The full list with conditions is in the [policy overview](/policy/overview#the-default-policy). Whatever policy you write, the non-overridable [Safety_Floor](/policy/overview#safety-floor) still runs after it.
 
 - `trikon init` copies the packaged default into `<repo>/.trikon/policy.yaml`. `--force` overwrites an existing file; without `--force` the CLI refuses.
 - When `.trikon/policy.yaml` does not exist, `load_policy` silently returns the packaged default. No warning, no error — the wheel-shipped default is the invariant floor.

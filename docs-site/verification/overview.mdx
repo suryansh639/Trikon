@@ -6,7 +6,7 @@ description: "Phase 2 of Trikon. Turns an ImpactSet into executed evidence — p
 Verification is the part of Trikon that actually runs the tests and lints on a change and reports whether they passed. It is Phase 2 of the [12-week build](https://github.com/suryansh639/Trikon/blob/main/EXECUTION_PLAN.md): the layer that lets `sdk.verify()` attach real evidence to a [Verdict](/concepts/verdicts).
 
 <Note>
-  **Phase 2 status.** The verification runner is live behind `trikon debug verify`. `sdk.verify()` now returns a [Verdict](/concepts/verdicts) whose `evidence.verification` is populated — but the decision remains `require_human` until the policy engine ships in Phase 3. Details: [`docs/verification.md`](https://github.com/suryansh639/Trikon/blob/main/docs/verification.md) on GitHub.
+  **Status.** The verification runner and the [policy engine](/policy/overview) are both delivered. `sdk.verify()` returns a [Verdict](/concepts/verdicts) whose `evidence.verification` is populated and whose decision comes from the policy, followed by a non-overridable Safety_Floor. Details: [`docs/verification.md`](https://github.com/suryansh639/Trikon/blob/main/docs/verification.md) on GitHub.
 </Note>
 
 ## What it does
@@ -20,7 +20,8 @@ ImpactSet
 run_verification (Docker sandbox)
    │
    ├── select_impacted_tests  → coverage_map lookup, filename fallback
-   ├── pytest <selected node IDs>
+   ├── pytest --collect-only  → Collection_Pass over the whole suite
+   ├── pytest <selected node IDs> | full suite | none  → choose_strategy
    ├── ruff  <changed files>   → diff vs static_baseline
    ├── mypy  <changed files>   → diff vs static_baseline
    └── .trikon/checks/*.py     → repo-defined plugins
@@ -32,7 +33,7 @@ VerificationReport
 sdk.verify → Verdict(evidence.verification=…)
 ```
 
-The report is a Pydantic model with four top-level fields: `tests` (pytest outcomes), `static` (ruff + mypy findings with a `is_new` flag), `plugins` (per-plugin findings and error slots), and `sandbox_ms` + `total_ms` timings. This shape is what the policy engine will grade in Phase 3.
+The report is a Pydantic model with these top-level fields: `tests` (pytest outcomes plus the test strategy and collection results), `static` (ruff + mypy findings with a `is_new` flag), `plugins` (per-plugin findings and error slots), `imports` (broken static imports of modules or names the change removed), and `sandbox_ms` + `total_ms` timings. This shape is what the [policy engine](/policy/overview) grades.
 
 ## The pytest-first invariant
 
@@ -46,7 +47,7 @@ Pytest, ruff, mypy, and plugins all run sequentially inside a single container. 
 
 ## Sandbox isolation
 
-Everything the verification runner executes runs inside `trikon/sandbox:0.1.0`, a pinned Docker image the runner controls end to end.
+Everything the verification runner executes runs inside `suryansh639/trikon:<version>`, a pinned Docker image the runner controls end to end. The tag matches the trikon release, and the image also ships the `trikon` CLI in its own venv at `/opt/trikon`.
 
 | Guarantee | How |
 | --- | --- |
@@ -79,13 +80,25 @@ The SDK boundary is one `try` block. Any subclass of `VerificationRunnerError` t
 
 ## Test selection
 
-Trikon does not run the whole test suite on every verdict. It picks the impacted subset:
+Trikon runs only the impacted subset when it can trust the selection, and the whole suite when it cannot. Selection works like this:
 
 1. **Coverage-map lookup** — per changed symbol, query `coverage_map` in `.trikon/state.db` keyed on `(qualified_name, base_sha)` for the pytest node IDs that exercise it.
 2. **Filename heuristic fallback** — for any symbol without a coverage-map row, try `tests/test_{leaf}.py` and `tests/{pkg}/test_{leaf}.py`.
 3. **Staleness override** — when the coverage map is older than 7 days OR its `built_against_sha` disagrees with the change's `base_sha`, every symbol routes through the fallback and `TestReport.coverage_map_stale=True` propagates onto the verdict.
 
-Rebuild the map with `trikon coverage build` after significant test-suite reorganization.
+Before any test runs, a **Collection_Pass** (`pytest --collect-only`) over the whole suite records `collected` and every `collection_errors` entry. Then `choose_strategy` decides what to execute:
+
+| Change | Selection | Fresh coverage map and caller-supplied base SHA | `strategy` | `strategy_reasons` |
+| --- | --- | --- | --- | --- |
+| not Python | empty | any | `none` | `[]` |
+| not Python | non-empty | any | `selected` | `[]` |
+| Python | empty | any | `full_suite` | `["empty_selection"]` |
+| Python | non-empty | yes | `selected` | `[]` |
+| Python | non-empty | no | `full_suite` | `coverage_map_missing`, `coverage_map_stale`, `no_base_sha` (each that applies) |
+
+The full suite runs with `--continue-on-collection-errors`, so one broken test file does not zero the run. A Python change never passes on zero executed tests. A timeout or a collection error the change did not cause sets `TestReport.incomplete` with matching `incomplete_reasons`. Full details: [`docs/verification.md`](https://github.com/suryansh639/Trikon/blob/main/docs/verification.md#the-test-stage).
+
+Rebuild the map with `trikon coverage build` after significant test-suite reorganization; without a fresh map, every Python change runs the full suite.
 
 ## Static-check diffing
 
@@ -108,12 +121,12 @@ Full authoring guide: [plugin authoring](/verification/plugin-authoring).
 Egress is off by default. When a policy declares `network_allowlist`, the runner creates a dedicated Docker bridge network for the verdict, attaches the container to it instead of `network_mode="none"`, and installs iptables rules inside the netns to allow only those hosts and CIDRs, drop everything else, and always allow `127.0.0.0/8`. Hostnames are resolved once at sandbox entry against the host resolver; the resolved IP set is what the rules pin.
 
 <Warning>
-  **Phase 2 warning.** The allowlist code path is behind a warning in Phase 2 while the iptables sidecar is hardened. Do not rely on it to gate production egress until Phase 3 flips the invariant. See [troubleshooting](/verification/troubleshooting#network-allowlist-not-enforced).
+  **Not enforced yet.** The allowlist code path is behind a warning while the iptables sidecar is hardened; a non-empty allowlist logs a warning and the sandbox stays on `network_mode="none"`. Do not rely on it to gate production egress until enforcement ships. See [troubleshooting](/verification/troubleshooting#network-allowlist-not-enforced).
 </Warning>
 
 ## Never fail-open
 
-Every raise site inside `trikon/verify/**` is a subclass of `VerificationRunnerError`. The SDK boundary catches that base class and returns a `require_human` verdict backed by the `EMPTY_VERIFICATION` sentinel — never `allow`. Timeouts are converted to a synthesized failed `TestReport` inside the runner and never surface as exceptions past the module boundary.
+Every raise site inside `trikon/verify/**` is a subclass of `VerificationRunnerError`. The SDK boundary catches that base class and returns a `require_human` verdict backed by the `EMPTY_VERIFICATION` sentinel — never `allow`. Timeouts mark the `TestReport` incomplete (`collection_timeout` or `execution_timeout`) inside the runner and never surface as exceptions past the module boundary. A collection report that cannot be read raises `CollectionPassError`, which fails closed the same way.
 
 The subclasses you might see reported through the CLI or logs:
 

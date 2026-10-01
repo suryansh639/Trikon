@@ -44,13 +44,19 @@ The `python -c` invocation prints the raw parser error including the line and co
 RuleMatchError: unknown condition key: 'actor.agent_id' in rule 'gate on gpt-5'
 ```
 
-**Cause.** The rule's `when:` clause references a key the evaluator does not recognize. The five accepted keys are enumerated in [policy authoring](/policy/authoring#the-five-condition-types):
+**Cause.** The rule's `when:` clause references a key the evaluator does not recognize. The accepted keys are enumerated in [policy authoring](/policy/authoring#the-condition-types):
 
 - `any_path_matches`
 - `no_path_matches`
 - `change.blast_radius.score`
 - `verification.tests.status`
 - `verification.static.new_errors`
+- `verification.tests.executed`, `verification.tests.total`, `verification.tests.strategy`, `verification.tests.incomplete`
+- `verification.imports.broken`, `verification.imports.incomplete`
+- `change.python_change`
+- `any_of`
+
+A previous-release engine does not know the keys after the first five, so it raises `RuleMatchError` (and fails closed) on a policy that uses them, such as the current default policy. Upgrade the engine rather than removing the rule.
 
 Anything else — `actor.agent_id`, `time_of_day`, a typo like `verification.test.status` (singular `test`) — raises `RuleMatchError`. This is a policy-authoring error, not a data error. The evaluator refuses to silently ignore an unrecognized key because that would make policy behavior depend on runtime state the author cannot see.
 
