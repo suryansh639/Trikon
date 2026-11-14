@@ -56,7 +56,10 @@ from trikon_cloud.fargate_runner.github_client import (
     GithubClientError,
 )
 from trikon_cloud.fargate_runner.models import (
+    INTERIM_CHECK_RUN_SUMMARY,
+    INTERIM_CHECK_RUN_TITLE,
     CheckRunCreatePayload,
+    CheckRunInterimPayload,
     CheckRunOutput,
     CheckRunUpdatePayload,
     GithubCheckRunResponse,
@@ -293,6 +296,40 @@ def test_create_check_run_success() -> None:
         body_json: dict[str, Any] = json.loads(body_bytes)
         assert body_json["name"] == "Trikon"
         assert body_json["conclusion"] in {"success", "failure", "neutral"}
+
+
+def test_create_check_run_posts_interim_payload_without_conclusion() -> None:
+    """The Interim_Check_Run goes to the same endpoint, in_progress and with
+    no ``conclusion`` key on the wire (Req 10.2)."""
+    with respx.mock(base_url="https://api.github.com") as respx_mock:
+        route = respx_mock.post(f"/repos/{REPO_FULL_NAME}/check-runs").mock(
+            return_value=httpx.Response(201, json=make_check_run_response(333))
+        )
+
+        client = GithubClient()
+        response = client.create_check_run(
+            installation_token="ghs_test",
+            repo_full_name=REPO_FULL_NAME,
+            body=CheckRunInterimPayload(
+                name="Trikon",
+                head_sha="a" * 40,
+                status="in_progress",
+                output=CheckRunOutput(
+                    title=INTERIM_CHECK_RUN_TITLE, summary=INTERIM_CHECK_RUN_SUMMARY
+                ),
+            ),
+        )
+
+        assert response.id == 333
+        assert route.call_count == 1
+        request = route.calls[-1].request
+        assert request.method == "POST"
+        body_json: dict[str, Any] = json.loads(request.content)
+        assert body_json["name"] == "Trikon"
+        assert body_json["status"] == "in_progress"
+        assert "conclusion" not in body_json
+        assert "details_url" not in body_json
+        assert body_json["output"]["title"] == INTERIM_CHECK_RUN_TITLE
 
 
 def test_patch_check_run_uses_patch_method_and_correct_path() -> None:

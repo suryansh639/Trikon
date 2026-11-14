@@ -12,9 +12,11 @@ Requirement 9.2 pins the natural-key context to a fixed five-field set —
 inbound :class:`SqsJobMessage` has validated. Every subsequent log
 record within the same warm invocation carries those keys.
 
-:data:`LOGGING_DENYLIST` (design.md §7.4) enumerates the ten field names
-that must never appear as structured log keys — raw SQS bodies, the
-``ecs.RunTask`` response body, and any credential material. Requirement
+:data:`LOGGING_DENYLIST` (design.md §7.4) enumerates the fourteen field
+names that must never appear as structured log keys — raw SQS bodies,
+the ``ecs.RunTask`` response body, any credential material, and the
+Usage_API material (the Usage_Secret, Usage_Signatures, and request and
+response bodies; sandbox-minute-plans Req 11.17, 15.1). Requirement
 9.3 / Invariant 6 forbid emitting those payloads at any level.
 
 Note that we deliberately do NOT install a Powertools log filter that
@@ -51,6 +53,11 @@ LOGGING_DENYLIST: frozenset[str] = frozenset(
         "installation_token",
         "app_jwt",
         "aws_credentials",
+        # Usage_API material (sandbox-minute-plans Req 11.17, 15.1).
+        "usage_secret",
+        "usage_signature",
+        "request_body",
+        "response_body",
     }
 )
 

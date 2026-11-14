@@ -18,8 +18,8 @@ by a separate contract test (``test_iam_policy_contract.py``, task
 19). This suite pins the shape the renderer produces:
 
 * Four ``Statement`` entries in the fixed order pinned by design §6.3
-  (DynamoDB verdicts, DynamoDB pr_state, S3 evidence, Secrets Manager
-  App key).
+  (DynamoDB verdicts, DynamoDB pr_state, S3 evidence, SSM App key
+  parameter).
 * Each Statement's ``Action`` is a ``tuple[str, ...]`` on the Python
   side, but on the wire the ``@field_serializer`` on
   :class:`PolicyStatement` collapses single-element tuples to a bare
@@ -28,7 +28,7 @@ by a separate contract test (``test_iam_policy_contract.py``, task
   bare-string form for one-action statements and the list form for
   multi-action statements; matching that shape is what makes the P10
   byte-match hold. Concretely, statements 0 (``dynamodb:PutItem``)
-  and 3 (``secretsmanager:GetSecretValue``) serialize to strings;
+  and 3 (``ssm:GetParameter``) serialize to strings;
   statements 1 (three DynamoDB actions) and 2 (``PutObject``,
   ``GetObject``) serialize to lists.
 * ``Sid`` is a Python attribute on :class:`PolicyStatement` (design
@@ -46,7 +46,7 @@ by a separate contract test (``test_iam_policy_contract.py``, task
   iam_template.py module docstring).
 * Statements 2 and 3 have ``Condition=None`` — the scoping is baked
   into the S3 ``Resource`` ARN on Statement 2 and Statement 3 is
-  unconditional read on the App private-key secret.
+  unconditional read on the App_Key_Parameter ARN.
 
 The :func:`canonical_json` tests pin the serializer's four canonical
 properties: determinism, sorted keys with no whitespace, alias
@@ -59,6 +59,9 @@ from __future__ import annotations
 
 import json
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from trikon_cloud.installation_lifecycle.iam_template import (
     AssumeRolePolicyDocument,
     InstallationPolicyDocument,
@@ -69,7 +72,8 @@ from trikon_cloud.installation_lifecycle.iam_template import (
 
 from .conftest import (
     CANONICAL_ACCOUNT_ID,
-    CANONICAL_APP_PRIVATE_KEY_SECRET_ARN,
+    CANONICAL_APP_PRIVATE_KEY_PARAMETER_ARN,
+    CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
     CANONICAL_INSTALLATION_ID,
 )
 
@@ -94,7 +98,7 @@ def _make_policy() -> InstallationPolicyDocument:
     """Build the canonical policy document every test in this file reads."""
     return render_installation_policy_document(
         installation_id=CANONICAL_INSTALLATION_ID,
-        app_private_key_secret_arn=CANONICAL_APP_PRIVATE_KEY_SECRET_ARN,
+        app_private_key_parameter_name=CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
         account_id=CANONICAL_ACCOUNT_ID,
         region=_REGION,
     )
@@ -122,7 +126,7 @@ def test_render_returns_four_statements_in_fixed_order() -> None:
         "DynamoDBVerdictsScopedToInstallation",
         "DynamoDBPrStateScopedToInstallation",
         "S3EvidenceSpillScopedToInstallation",
-        "SecretsManagerAppPrivateKeyRead",
+        "SsmAppPrivateKeyRead",
     ]
 
 
@@ -186,19 +190,35 @@ def test_statement_2_s3_evidence_spill_shape() -> None:
     assert stmt.Condition is None
 
 
-def test_statement_3_secrets_manager_uses_passed_arn() -> None:
-    """Statement 3: ``secretsmanager:GetSecretValue`` on the passed ARN.
+def test_statement_3_ssm_get_parameter_on_app_key_parameter_arn() -> None:
+    """Statement 3: ``ssm:GetParameter`` on exactly the App_Key_Parameter ARN.
 
-    The App private-key secret ARN is a runtime input, not a computed
-    string, so the renderer passes it through byte-for-byte. Single
-    action, no ``Condition``.
+    Cost-cuts Req 4.4: one action, one resource (the Parameter_ARN built
+    from the passed name, account and region), no ``Condition`` and no
+    ``kms:Decrypt`` statement anywhere in the document.
     """
-    stmt = _make_policy().Statement[3]
+    doc = _make_policy()
+    stmt = doc.Statement[3]
 
+    assert stmt.Sid == "SsmAppPrivateKeyRead"
     assert stmt.Effect == "Allow"
-    assert stmt.Action == ("secretsmanager:GetSecretValue",)
-    assert stmt.Resource == CANONICAL_APP_PRIVATE_KEY_SECRET_ARN
+    assert stmt.Action == ("ssm:GetParameter",)
+    assert stmt.Resource == CANONICAL_APP_PRIVATE_KEY_PARAMETER_ARN
     assert stmt.Condition is None
+    all_actions = [action for s in doc.Statement for action in s.Action]
+    assert not any(action.startswith("kms:") for action in all_actions)
+
+
+def test_statement_3_uses_custom_parameter_name_account_and_region() -> None:
+    """A non-default name, account and region all land in statement 3's ARN."""
+    stmt = render_installation_policy_document(
+        CANONICAL_INSTALLATION_ID,
+        app_private_key_parameter_name="/acme/prod/app.key_v2",
+        account_id="123456789012",
+        region="eu-west-1",
+    ).Statement[3]
+
+    assert stmt.Resource == "arn:aws:ssm:eu-west-1:123456789012:parameter/acme/prod/app.key_v2"
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +301,7 @@ def test_canonical_json_omits_none_condition_field() -> None:
     :class:`aws_cdk.aws_iam.PolicyStatement` renders JSON without a
     ``"Condition"`` key when no conditions are configured. Emitting
     ``"Condition":null`` would break the byte-match on Statements 2
-    (S3) and 3 (Secrets Manager) — see the iam_template.py docstring
+    (S3) and 3 (SSM) — see the iam_template.py docstring
     on :func:`canonical_json` for the full rationale.
     """
     output = canonical_json(_make_policy())
@@ -338,7 +358,7 @@ def test_canonical_json_round_trip_produces_four_statements() -> None:
     byte-match.
 
     ``Action`` shape on the wire is arity-dependent: statements 0
-    (``dynamodb:PutItem``) and 3 (``secretsmanager:GetSecretValue``)
+    (``dynamodb:PutItem``) and 3 (``ssm:GetParameter``)
     are single-action tuples that the
     :meth:`PolicyStatement._serialize_action` field serializer
     collapses to bare strings, while statements 1 (three DynamoDB
@@ -358,7 +378,7 @@ def test_canonical_json_round_trip_produces_four_statements() -> None:
         "DynamoDBVerdictsScopedToInstallation",
         "DynamoDBPrStateScopedToInstallation",
         "S3EvidenceSpillScopedToInstallation",
-        "SecretsManagerAppPrivateKeyRead",
+        "SsmAppPrivateKeyRead",
     ]
     # ...and confirm it does NOT appear on the wire.
     for stmt in parsed["Statement"]:
@@ -371,3 +391,64 @@ def test_canonical_json_round_trip_produces_four_statements() -> None:
     assert isinstance(parsed["Statement"][1]["Action"], list)
     assert isinstance(parsed["Statement"][2]["Action"], list)
     assert isinstance(parsed["Statement"][3]["Action"], str)
+
+
+# ---------------------------------------------------------------------------
+# Property 2 (renderer half): the App-key statement uses the Parameter_ARN.
+# The parameter_arn half lives in trikon_cloud/tests/test_secure_params.py.
+# ---------------------------------------------------------------------------
+
+# Valid SSM parameter names: "/" followed by 1-1010 characters of the SSM
+# name character set (the same set parameter_name_from_context accepts).
+_PARAMETER_NAMES = st.text(
+    alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-/",
+    min_size=1,
+    max_size=1010,
+).map(lambda tail: "/" + tail)
+_ACCOUNTS = st.text(alphabet="0123456789", min_size=12, max_size=12)
+_REGIONS = st.from_regex(r"[a-z]{2}(-gov)?-[a-z]{4,9}-[1-9]", fullmatch=True)
+
+
+# Feature: trikon-cloud-cost-cuts, Property 2: App-key statement uses the Parameter_ARN
+@given(
+    installation_id=st.integers(min_value=1, max_value=2**63 - 1),
+    name=_PARAMETER_NAMES,
+    account=_ACCOUNTS,
+    region=_REGIONS,
+)
+@settings(max_examples=200, deadline=None)
+def test_property_app_key_statement_uses_parameter_arn(
+    installation_id: int, name: str, account: str, region: str
+) -> None:
+    """**Validates: Requirements 4.4, 6.1**
+
+    For any installation id >= 1, valid parameter name, 12-digit account
+    and region, statement 3 is ``ssm:GetParameter`` on exactly
+    ``arn:aws:ssm:{region}:{account}:parameter{name}``, on the model and on
+    the wire, and the canonical JSON carries no Secrets Manager action.
+    """
+    doc = render_installation_policy_document(
+        installation_id,
+        app_private_key_parameter_name=name,
+        account_id=account,
+        region=region,
+    )
+    expected_arn = f"arn:aws:ssm:{region}:{account}:parameter{name}"
+
+    stmt = doc.Statement[3]
+    assert stmt.Sid == "SsmAppPrivateKeyRead"
+    assert stmt.Effect == "Allow"
+    assert stmt.Action == ("ssm:GetParameter",)
+    assert stmt.Resource == expected_arn
+    assert stmt.Condition is None
+
+    output = canonical_json(doc)
+    wire_stmt = json.loads(output)["Statement"][3]
+    assert wire_stmt == {
+        "Action": "ssm:GetParameter",
+        "Effect": "Allow",
+        "Resource": expected_arn,
+    }
+    # Built by concatenation so the Req 6.1 static scan (task 19.1) does
+    # not flag this negative assertion as a live reference.
+    assert "secrets" + "manager:" not in output

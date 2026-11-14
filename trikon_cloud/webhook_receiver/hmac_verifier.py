@@ -41,8 +41,8 @@ def verify_signature(body: bytes, signature_header: str | None, secret: bytes) -
         body: Raw HTTP request body bytes (post base64-decode).
         signature_header: Verbatim ``X-Hub-Signature-256`` header value,
             or ``None`` if the request did not carry the header.
-        secret: The shared webhook secret bytes fetched from Secrets
-            Manager.
+        secret: The shared webhook secret bytes read from the SSM
+            Parameter Store SecureString parameter.
 
     Returns:
         ``True`` iff ``signature_header`` matches the SHA-256 HMAC of

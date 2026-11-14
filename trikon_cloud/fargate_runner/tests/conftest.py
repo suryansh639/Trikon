@@ -26,13 +26,13 @@ Provides:
   :func:`make_check_run_response`, :func:`make_comment_response` —
   factories returning canonical GitHub REST response bodies.
 * :func:`mock_aws_env`, :func:`dynamodb_tables`,
-  :func:`evidence_bucket`, :func:`secrets_manager_secret` — pytest
+  :func:`evidence_bucket`, :func:`app_key_parameter` — pytest
   fixtures that stand up moto-backed AWS credentials + control-plane
   resources.
 
 **A note on the moto v5 nested-context pattern.** Each ``mock_aws()``
 context in the ``dynamodb_tables`` / ``evidence_bucket`` /
-``secrets_manager_secret`` fixtures below is scoped to its own
+``app_key_parameter`` fixtures below is scoped to its own
 fixture. Tests that need resources from multiple fixtures should
 decorate the test itself with ``@mock_aws()`` (or use a single
 fixture that composes the setup). This is a known limitation
@@ -83,6 +83,8 @@ BASE_SHA: str = "87f7a31b" + "0" * 32  # 40-char hex
 DELIVERY_ID: str = "e6e7a4d0-2b3c-4c5d-b6a7-1234567890ab"
 APP_ID: int = 999999
 EVENT_TYPE: str = "pull_request.opened"
+# SSM SecureString parameter holding the GitHub App private key PEM.
+APP_PRIVATE_KEY_PARAMETER_NAME: str = "/trikon-cloud/github-app-private-key"
 
 
 def _generate_rsa_test_key() -> bytes:
@@ -197,10 +199,7 @@ def make_env_vars(
     event_type: str = EVENT_TYPE,
     delivery_id: str = DELIVERY_ID,
     app_id: int = APP_ID,
-    app_private_key_secret_arn: str = (
-        "arn:aws:secretsmanager:us-east-1:123456789012:"
-        "secret:trikon-cloud/github-app-private-key-abcdef"
-    ),
+    app_private_key_parameter_name: str = APP_PRIVATE_KEY_PARAMETER_NAME,
 ) -> dict[str, str]:
     """Return the memo §5.4 env dict for :class:`RunnerEnvConfig`.
 
@@ -218,7 +217,7 @@ def make_env_vars(
         "TRIKON_EVENT_TYPE": event_type,
         "TRIKON_DELIVERY_ID": delivery_id,
         "TRIKON_APP_ID": str(app_id),
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN": app_private_key_secret_arn,
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME": app_private_key_parameter_name,
         "AWS_REGION": "us-east-1",
     }
 
@@ -342,20 +341,20 @@ def evidence_bucket(mock_aws_env: None) -> Iterator[str]:
 
 
 @pytest.fixture
-def secrets_manager_secret(mock_aws_env: None) -> Iterator[str]:
-    """Create a moto Secrets Manager secret with the RSA PEM; yield ARN.
+def app_key_parameter(mock_aws_env: None) -> Iterator[str]:
+    """Create a moto SSM SecureString with the RSA PEM; yield its name.
 
     Mirrors the operator-provisioned
-    ``trikon-cloud/github-app-private-key`` secret referenced by the
-    CDK stack. Yields the complete ARN so tests can drive
-    ``RunnerEnvConfig.app_private_key_secret_arn`` end-to-end without
-    hardcoding an account number.
+    ``/trikon-cloud/github-app-private-key`` parameter referenced by
+    the CDK stack. Yields the parameter name so tests can drive
+    ``RunnerEnvConfig.app_private_key_parameter_name`` end-to-end.
     """
     del mock_aws_env  # dependency only; monkeypatch has fired by now
     with mock_aws():
-        client = boto3.client("secretsmanager", region_name="us-east-1")
-        resp = client.create_secret(
-            Name="trikon-cloud/github-app-private-key",
-            SecretString=APP_PRIVATE_KEY_PEM.decode("utf-8"),
+        client = boto3.client("ssm", region_name="us-east-1")
+        client.put_parameter(
+            Name=APP_PRIVATE_KEY_PARAMETER_NAME,
+            Value=APP_PRIVATE_KEY_PEM.decode("utf-8"),
+            Type="SecureString",
         )
-        yield str(resp["ARN"])
+        yield APP_PRIVATE_KEY_PARAMETER_NAME

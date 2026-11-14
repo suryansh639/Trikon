@@ -21,9 +21,15 @@ time recovery on, RETAIN on stack teardown).
 References existing (Spec 1-owned) resources by ARN — ``trikon-verify-jobs``
 and ``trikon-verify-jobs-dlq`` — plus the SSM parameter
 ``/trikon/verify-runner/active-revision`` (populated out-of-band by
-Spec 2 per design.md §9.2). The App private-key Secrets Manager secret
-is likewise referenced by ARN and never created here (Requirement 16.4,
-matching Spec 1/2 conventions).
+Spec 2 per design.md §9.2). The two SSM SecureString parameters (the
+GitHub App private key and the Usage_Secret) are likewise referenced by
+name and never created here (cost-cuts Req 3.5): each role that reads
+one gets an inline ``ssm:GetParameter`` statement on exactly its
+Parameter_ARN (cost-cuts Req 4.2, 4.3), never a ``grant_read`` helper.
+
+Each Lambda logs to an explicit ``/aws/lambda/<function_name>`` group
+with 7-day retention (cost-cuts Req 2.3, 2.4), created by
+:func:`_function_log_group` and wired through ``log_group=``.
 
 IAM policy shapes are pinned by Requirements 8.2-8.6 (orchestrator) and
 15.4-15.5 (lifecycle) — the eight orchestrator grants live in
@@ -31,6 +37,25 @@ IAM policy shapes are pinned by Requirements 8.2-8.6 (orchestrator) and
 in :func:`_grant_lifecycle_permissions`, matching design.md §8.2/§8.3
 one-for-one. Requirement 15.5 is enforced by absence: the lifecycle
 role has NO ``iam:PassRole`` grant.
+
+The sandbox-minute-plans spec (design.md §11) adds quota enforcement and
+usage metering: the orchestrator gains the Trikon_Web Usage_API env vars,
+a 90 s timeout, ``sqs:SendMessage`` on its own source queue (busy
+re-enqueue, Req 11.18-11.19) and read access to the Usage_Secret
+(Req 11.16, now part of ``SecureParameterRead``). A new
+``trikon-cloud-usage-reporter`` Lambda is invoked by the
+``trikon-verify-runner-task-stopped`` EventBridge rule on runner tasks
+reaching ``STOPPED`` (Req 12.1), with failed events landing in
+``trikon-cloud-usage-reporter-dlq`` (Req 12.8-12.9).
+
+The trikon-cloud-cost-cuts spec (design.md §4-5) adds Fargate Spot: the
+orchestrator gets the Spot_Flag (``TRIKON_USE_FARGATE_SPOT``), the
+``trikon_pr_state`` table name and read grant, and the verify-jobs
+``maxReceiveCount``. A new ``trikon-cloud-spot-retry`` Lambda is the second
+target of the task-stopped rule; it re-queues a Spot-interrupted Attempt 1
+once (``sqs:SendMessage`` on ``trikon-verify-jobs``, Req 9.7), dedupes per
+task ARN in the ``trikon-cloud-spot-retries`` table, and fails closed
+otherwise. Failed events land in ``trikon-cloud-spot-retry-dlq``.
 
 Region is fixed at ``us-east-1`` (Requirement 16.1) via the ``env`` on
 the enclosing ``cdk.App`` (see ``app.py``, task 14). Deploy commands,
@@ -44,15 +69,61 @@ from typing import Any
 
 from aws_cdk import Duration, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as _lambda
 from aws_cdk import aws_lambda_event_sources as lambda_events
-from aws_cdk import aws_secretsmanager as secretsmanager
+from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
-__all__ = ["OrchestratorStack"]
+from trikon_cloud.secure_params import (
+    APP_KEY_PARAMETER_ENV,
+    USAGE_SECRET_PARAMETER_ENV,
+    parameter_arn,
+)
+from trikon_cloud.webhook_receiver.infra.webhook_receiver_stack import (
+    VERIFY_JOBS_MAX_RECEIVE_COUNT,
+)
+
+__all__ = [
+    "ORCHESTRATOR_PR_STATE_READ_SID",
+    "SECURE_PARAMETER_READ_SID",
+    "SPOT_RETRY_APP_KEY_PARAMETER_READ_SID",
+    "SPOT_RETRY_CLAIMS_SID",
+    "SPOT_RETRY_PR_STATE_READ_SID",
+    "SPOT_RETRY_SEND_RETRY_JOB_SID",
+    "SPOT_RETRY_VERDICT_WRITE_SID",
+    "USAGE_SECRET_PARAMETER_READ_SID",
+    "OrchestratorStack",
+]
+
+# Sids of the inline ``ssm:GetParameter`` statements on Secure_Parameters
+# (cost-cuts Req 4.2, 4.3). The orchestrator role reads the App key and the
+# Usage_Secret; the Usage_Reporter role reads only the Usage_Secret.
+SECURE_PARAMETER_READ_SID = "SecureParameterRead"
+USAGE_SECRET_PARAMETER_READ_SID = "UsageSecretParameterRead"
+
+# The orchestrator reads the Interim_Check_Run id from ``trikon_pr_state`` on
+# the Retry_Job dispatch-failure path (cost-cuts Req 11.5).
+ORCHESTRATOR_PR_STATE_READ_SID = "OrchestratorPrStateRead"
+
+# Sids of the Spot_Retry_Handler role statements (cost-cuts design §5).
+SPOT_RETRY_APP_KEY_PARAMETER_READ_SID = "SpotRetryAppKeyParameterRead"
+SPOT_RETRY_SEND_RETRY_JOB_SID = "SpotRetrySendRetryJob"
+SPOT_RETRY_VERDICT_WRITE_SID = "SpotRetryVerdictWrite"
+SPOT_RETRY_PR_STATE_READ_SID = "SpotRetryPrStateRead"
+SPOT_RETRY_CLAIMS_SID = "SpotRetryClaims"
+
+# Fleet-wide table names shared by the orchestrator and the Spot_Retry_Handler.
+_VERDICTS_TABLE = "trikon_verdicts"
+_PR_STATE_TABLE = "trikon_pr_state"
+_SPOT_RETRIES_TABLE = "trikon-cloud-spot-retries"
+_CHECK_RUN_DETAILS_URL_TEMPLATE = (
+    "https://api.trikon.unideploy.com/audits/{delivery_id}"
+)
 
 
 class OrchestratorStack(Stack):
@@ -62,9 +133,9 @@ class OrchestratorStack(Stack):
     (installation-events), and one new DynamoDB table (installations).
     References Spec 1's ``trikon-verify-jobs`` queue + DLQ by ARN, and
     Spec 2's ``/trikon/verify-runner/active-revision`` SSM parameter by
-    name. Does NOT create the App private-key Secrets Manager secret —
-    the release engineer populates it out-of-band before the first
-    deploy (Requirement 16.4).
+    name. Does NOT create the App-key or Usage_Secret SSM SecureString
+    parameters — the release engineer creates them out-of-band before
+    the first deploy (Requirement 16.4; cost-cuts Req 3.5).
 
     Args:
         scope: Parent construct (typically the ``cdk.App`` from
@@ -75,9 +146,12 @@ class OrchestratorStack(Stack):
             ``TRIKON_APP_ID`` env var so the GitHub JWT minter in
             :mod:`trikon_cloud.orchestrator.never_fail_open` can produce
             valid Check Run tokens.
-        app_private_key_secret_arn: Complete ARN of the pre-existing
-            Secrets Manager secret holding the GitHub App private key.
-            Grants read-only access to the orchestrator role.
+        app_private_key_parameter_name: Name (``/``-rooted) of the
+            pre-existing SSM SecureString parameter holding the GitHub App
+            private key. Passed as ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME``
+            to the orchestrator and the installation-lifecycle Lambda
+            (which bakes it into per-installation task-role policies).
+            Only the orchestrator role may read it (``SecureParameterRead``).
         verify_jobs_queue_arn: ARN of Spec 1's ``trikon-verify-jobs``
             queue — the orchestrator's SQS event source (Requirement
             1.1). Passed by ARN so this stack has no cross-stack CFN
@@ -95,6 +169,21 @@ class OrchestratorStack(Stack):
             holding the active task-definition revision (populated by
             Spec 2's amendment per design.md §9.2). Read by the
             orchestrator via :class:`TaskDefinitionResolver`.
+        trikon_web_api_url: Trikon_Web Usage_API base URL (https). Set
+            as ``TRIKON_WEB_API_URL`` on the orchestrator and the
+            Usage_Reporter (Req 11.14).
+        trikon_web_app_url: Trikon_Web_App_URL (https) used for the
+            Connect/Upgrade links in Fail_Closed_Results. Set as
+            ``TRIKON_WEB_APP_URL`` on the orchestrator (Req 11.14).
+        usage_secret_parameter_name: Name (``/``-rooted) of the
+            pre-existing SSM SecureString parameter holding the
+            Usage_Secret. Passed as
+            ``TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME`` to the orchestrator
+            and the Usage_Reporter; both roles get ``ssm:GetParameter`` on
+            exactly its Parameter_ARN (Req 11.16; cost-cuts Req 4.2, 4.3).
+        use_fargate_spot: Spot_Flag (cost-cuts Req 8.2). Set on the
+            orchestrator as ``TRIKON_USE_FARGATE_SPOT`` (``"true"`` or
+            ``"false"``); when on, Attempt 1 runs on ``FARGATE_SPOT``.
         kwargs: Forwarded to :class:`aws_cdk.Stack`. Typically carries
             the ``env=cdk.Environment(account=..., region="us-east-1")``
             pin supplied by ``app.py``.
@@ -109,12 +198,27 @@ class OrchestratorStack(Stack):
             webhook receiver amendment writes here.
         installations_table_name: Name of the
             ``trikon-cloud-installations`` DynamoDB table.
+        usage_reporter_function_arn: ARN of the
+            ``trikon-cloud-usage-reporter`` Lambda.
+        usage_reporter_dlq_url: URL of the
+            ``trikon-cloud-usage-reporter-dlq`` queue.
+        spot_retry_function_arn: ARN of the ``trikon-cloud-spot-retry``
+            Lambda.
+        spot_retry_dlq_url: URL of the ``trikon-cloud-spot-retry-dlq``
+            queue.
+        spot_retries_table_name: Name of the
+            ``trikon-cloud-spot-retries`` DynamoDB table.
     """
 
     orchestrator_function_arn: str
     lifecycle_function_arn: str
     installation_events_queue_url: str
     installations_table_name: str
+    usage_reporter_function_arn: str
+    usage_reporter_dlq_url: str
+    spot_retry_function_arn: str
+    spot_retry_dlq_url: str
+    spot_retries_table_name: str
 
     def __init__(
         self,
@@ -122,12 +226,16 @@ class OrchestratorStack(Stack):
         construct_id: str,
         *,
         app_id: int,
-        app_private_key_secret_arn: str,
+        app_private_key_parameter_name: str,
         verify_jobs_queue_arn: str,
         verify_jobs_dlq_arn: str,
         runner_subnet_ids: list[str],
         runner_security_group_ids: list[str],
+        trikon_web_api_url: str,
+        trikon_web_app_url: str,
+        usage_secret_parameter_name: str,
         verify_runner_active_revision_ssm_param: str = "/trikon/verify-runner/active-revision",
+        use_fargate_spot: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -221,15 +329,23 @@ class OrchestratorStack(Stack):
         lambda_code = _lambda.Code.from_asset("trikon_cloud")
 
         # -------------------------------------------------------------
-        # 6. Reference the App private-key Secrets Manager secret by
-        # ARN. Used by the orchestrator to mint installation-scoped
-        # GitHub JWTs for the Never-Fail-Open Check Run POST (design
-        # §7.3). NOT created here — populated out-of-band.
+        # 6. Parameter_ARNs of the two SSM SecureString parameters. The
+        # App key lets the orchestrator mint installation-scoped GitHub
+        # JWTs for the Never-Fail-Open Check Run POST (design §7.3); the
+        # Usage_Secret signs Usage_API requests. Neither is created here
+        # (cost-cuts Req 3.5). No ``kms:Decrypt`` grant is needed: the
+        # AWS-managed ``aws/ssm`` key lets account principals decrypt
+        # through SSM.
         # -------------------------------------------------------------
-        app_private_key_secret = secretsmanager.Secret.from_secret_complete_arn(
-            self,
-            "AppPrivateKeySecret",
-            secret_complete_arn=app_private_key_secret_arn,
+        app_private_key_parameter_arn = parameter_arn(
+            region=self.region,
+            account=self.account,
+            name=app_private_key_parameter_name,
+        )
+        usage_secret_parameter_arn = parameter_arn(
+            region=self.region,
+            account=self.account,
+            name=usage_secret_parameter_name,
         )
 
         # -------------------------------------------------------------
@@ -253,18 +369,25 @@ class OrchestratorStack(Stack):
             verify_jobs_queue=verify_jobs_queue,
             verify_jobs_dlq=verify_jobs_dlq,
             active_revision_param=active_revision_param,
-            app_private_key_secret=app_private_key_secret,
+            app_private_key_parameter_arn=app_private_key_parameter_arn,
+            usage_secret_parameter_arn=usage_secret_parameter_arn,
             account_id=self.account,
         )
 
         # -------------------------------------------------------------
-        # 8. Orchestrator Lambda. Runtime configuration is pinned by
-        # Requirement 8.1: Python 3.11 / arm64 / 512 MB / 30 s /
-        # reserved concurrency 10. Env vars mirror
-        # :class:`OrchestratorEnvConfig`'s ten CDK-populated aliases
+        # 8. Orchestrator Lambda. Python 3.11 / arm64 / 512 MB /
+        # reserved concurrency 10 per Requirement 8.1. The timeout is
+        # 90 s (sandbox-minute-plans design.md §11): quota 10 s +
+        # RunTask + 0-minute release 30 s + Check Run 30 s, plus one
+        # SendMessage on the busy path; still well under the queue's
+        # 15-minute visibility timeout. Env vars mirror
+        # :class:`OrchestratorEnvConfig`'s CDK-populated aliases
         # (``AWS_REGION`` is runtime-injected by Lambda, so we don't
         # set it here — the value falls through to
         # :class:`OrchestratorEnvConfig`'s default of ``"us-east-1"``).
+        # ``TRIKON_QUOTA_TIME_BUDGET_SECONDS`` and
+        # ``TRIKON_QUEUE_WAIT_LIMIT_SECONDS`` are deliberately left
+        # unset so their model defaults apply.
         # -------------------------------------------------------------
         orchestrator_fn = _lambda.Function(
             self,
@@ -273,7 +396,7 @@ class OrchestratorStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_11,
             architecture=_lambda.Architecture.ARM_64,
             memory_size=512,
-            timeout=Duration.seconds(30),
+            timeout=Duration.seconds(90),
             reserved_concurrent_executions=10,
             handler="trikon_cloud.orchestrator.handler.lambda_handler",
             code=lambda_code,
@@ -288,14 +411,33 @@ class OrchestratorStack(Stack):
                     verify_runner_active_revision_ssm_param
                 ),
                 "TRIKON_VERIFY_JOBS_DLQ_URL": verify_jobs_dlq.queue_url,
-                "TRIKON_VERDICTS_TABLE": "trikon_verdicts",
-                "TRIKON_APP_PRIVATE_KEY_SECRET_ARN": app_private_key_secret_arn,
+                "TRIKON_VERDICTS_TABLE": _VERDICTS_TABLE,
+                APP_KEY_PARAMETER_ENV: app_private_key_parameter_name,
                 "TRIKON_APP_ID": str(app_id),
                 "TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE": (
-                    "https://api.trikon.unideploy.com/audits/{delivery_id}"
+                    _CHECK_RUN_DETAILS_URL_TEMPLATE
                 ),
                 "TRIKON_LOG_LEVEL": "INFO",
+                "TRIKON_WEB_API_URL": trikon_web_api_url,
+                "TRIKON_WEB_APP_URL": trikon_web_app_url,
+                USAGE_SECRET_PARAMETER_ENV: usage_secret_parameter_name,
+                # Busy re-enqueue target (Req 11.18). ``from_queue_arn``
+                # derives the URL from the ARN, so this works for the
+                # imported queue.
+                "TRIKON_VERIFY_JOBS_QUEUE_URL": verify_jobs_queue.queue_url,
+                # Spot_Flag (cost-cuts Req 8.2): Attempt 1 on FARGATE_SPOT.
+                "TRIKON_USE_FARGATE_SPOT": "true" if use_fargate_spot else "false",
+                # Interim_Check_Run lookup on the Retry_Job failure path.
+                "TRIKON_PR_STATE_TABLE": _PR_STATE_TABLE,
+                # Same constant as the trikon-verify-jobs redrive policy, so
+                # the last Retry_Job receive fails closed (Req 11.5).
+                "TRIKON_VERIFY_JOBS_MAX_RECEIVE_COUNT": str(
+                    VERIFY_JOBS_MAX_RECEIVE_COUNT
+                ),
             },
+            log_group=_function_log_group(
+                self, "OrchestratorLogs", "trikon-cloud-orchestrator"
+            ),
         )
 
         # Batch size 1 + report-batch-item-failures per Requirement 1.1
@@ -356,10 +498,16 @@ class OrchestratorStack(Stack):
             role=lifecycle_role,
             environment={
                 "TRIKON_AWS_ACCOUNT_ID": self.account,
-                "TRIKON_APP_PRIVATE_KEY_SECRET_ARN": app_private_key_secret_arn,
+                # Baked into per-installation task-role policies by the
+                # Runtime_IAM_Renderer. The lifecycle role never reads the
+                # parameter value, so it has no SSM grant (cost-cuts Req 4.7).
+                APP_KEY_PARAMETER_ENV: app_private_key_parameter_name,
                 "TRIKON_INSTALLATIONS_TABLE": installations_table.table_name,
                 "TRIKON_LOG_LEVEL": "INFO",
             },
+            log_group=_function_log_group(
+                self, "LifecycleLogs", "trikon-cloud-installation-lifecycle"
+            ),
         )
 
         # Batch size 1 per Requirement 10.1 — mirrors the orchestrator's
@@ -374,7 +522,177 @@ class OrchestratorStack(Stack):
         )
 
         # -------------------------------------------------------------
-        # 11. Public attributes — surfaced for app.py / release
+        # 11. Usage_Reporter (sandbox-minute-plans design.md §11). One
+        # DLQ (14-day retention) catches both Lambda async-invoke
+        # failures (function errors after 2 retries / 6 h) and
+        # EventBridge delivery failures (185 retries / 24 h), Req 12.8,
+        # 12.9. The role carries only basic execution +
+        # UsageSecretParameterRead (cost-cuts Req 4.3); CDK adds
+        # ``sqs:SendMessage`` on the DLQ for the function's
+        # ``dead_letter_queue`` and a queue policy for the rule target.
+        # -------------------------------------------------------------
+        usage_dlq = sqs.Queue(
+            self,
+            "UsageReporterDlq",
+            queue_name="trikon-cloud-usage-reporter-dlq",
+            retention_period=Duration.days(14),
+        )
+        usage_reporter_role = iam.Role(
+            self,
+            "UsageReporterRole",
+            role_name="trikon-cloud-usage-reporter-role",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole",
+                ),
+            ],
+        )
+        usage_reporter_role.add_to_principal_policy(
+            _parameter_read_statement(
+                USAGE_SECRET_PARAMETER_READ_SID, [usage_secret_parameter_arn]
+            ),
+        )
+        usage_fn = _lambda.Function(
+            self,
+            "UsageReporterFn",
+            function_name="trikon-cloud-usage-reporter",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            architecture=_lambda.Architecture.ARM_64,
+            memory_size=256,
+            timeout=Duration.seconds(45),
+            reserved_concurrent_executions=5,
+            handler="trikon_cloud.usage_reporter.handler.lambda_handler",
+            code=lambda_code,
+            role=usage_reporter_role,
+            environment={
+                "TRIKON_WEB_API_URL": trikon_web_api_url,
+                USAGE_SECRET_PARAMETER_ENV: usage_secret_parameter_name,
+                "TRIKON_LOG_LEVEL": "INFO",
+            },
+            log_group=_function_log_group(
+                self, "UsageReporterLogs", "trikon-cloud-usage-reporter"
+            ),
+            retry_attempts=2,
+            max_event_age=Duration.hours(6),
+            dead_letter_queue=usage_dlq,
+        )
+
+        # -------------------------------------------------------------
+        # 12. Spot_Retry_Handler (cost-cuts design §5, Req 9, 11). Same
+        # DLQ shape as the Usage_Reporter: one 14-day queue catches async
+        # invoke failures (2 retries / 6 h) and EventBridge delivery
+        # failures (185 retries / 24 h). The claim table dedupes
+        # re-queues per task ARN (D3); its data is ephemeral, so it has
+        # a TTL, no PITR and DESTROY.
+        # -------------------------------------------------------------
+        spot_retry_dlq = sqs.Queue(
+            self,
+            "SpotRetryDlq",
+            queue_name="trikon-cloud-spot-retry-dlq",
+            retention_period=Duration.days(14),
+        )
+        spot_retries_table = dynamodb.TableV2(
+            self,
+            "SpotRetriesTable",
+            table_name=_SPOT_RETRIES_TABLE,
+            partition_key=dynamodb.Attribute(
+                name="task_arn",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            billing=dynamodb.Billing.on_demand(),
+            time_to_live_attribute="expires_at",
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        spot_retry_role = iam.Role(
+            self,
+            "SpotRetryRole",
+            role_name="trikon-cloud-spot-retry-role",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole",
+                ),
+            ],
+        )
+        _grant_spot_retry_permissions(
+            spot_retry_role,
+            app_private_key_parameter_arn=app_private_key_parameter_arn,
+            verify_jobs_queue_arn=verify_jobs_queue.queue_arn,
+            spot_retries_table_arn=spot_retries_table.table_arn,
+            account_id=self.account,
+        )
+        # Env mirrors every :class:`SpotRetryEnvConfig` alias except
+        # ``AWS_REGION``, which the Lambda runtime injects.
+        spot_retry_fn = _lambda.Function(
+            self,
+            "SpotRetryFn",
+            function_name="trikon-cloud-spot-retry",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            architecture=_lambda.Architecture.ARM_64,
+            memory_size=256,
+            timeout=Duration.seconds(90),
+            reserved_concurrent_executions=5,
+            handler="trikon_cloud.orchestrator.spot_retry_handler.lambda_handler",
+            code=lambda_code,
+            role=spot_retry_role,
+            environment={
+                "TRIKON_APP_ID": str(app_id),
+                APP_KEY_PARAMETER_ENV: app_private_key_parameter_name,
+                "TRIKON_VERIFY_JOBS_QUEUE_URL": verify_jobs_queue.queue_url,
+                "TRIKON_VERDICTS_TABLE": _VERDICTS_TABLE,
+                "TRIKON_PR_STATE_TABLE": _PR_STATE_TABLE,
+                "TRIKON_SPOT_RETRIES_TABLE": spot_retries_table.table_name,
+                "TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE": (
+                    _CHECK_RUN_DETAILS_URL_TEMPLATE
+                ),
+                "TRIKON_LOG_LEVEL": "INFO",
+            },
+            log_group=_function_log_group(
+                self, "SpotRetryLogs", "trikon-cloud-spot-retry"
+            ),
+            retry_attempts=2,
+            max_event_age=Duration.hours(6),
+            dead_letter_queue=spot_retry_dlq,
+        )
+
+        # Req 12.1, cost-cuts Req 9.1: route runner tasks on
+        # ``trikon-verify-cluster`` reaching STOPPED to the Usage_Reporter
+        # and the Spot_Retry_Handler. Both handlers re-check cluster, group,
+        # and status, so the pattern is a cost filter, not the only guard.
+        events.Rule(
+            self,
+            "VerifyRunnerTaskStoppedRule",
+            rule_name="trikon-verify-runner-task-stopped",
+            event_pattern=events.EventPattern(
+                source=["aws.ecs"],
+                detail_type=["ECS Task State Change"],
+                detail={
+                    "clusterArn": [
+                        f"arn:aws:ecs:us-east-1:{self.account}:cluster/trikon-verify-cluster",
+                    ],
+                    "lastStatus": ["STOPPED"],
+                    "group": ["family:trikon-verify-runner"],
+                },
+            ),
+            targets=[
+                targets.LambdaFunction(
+                    usage_fn,
+                    dead_letter_queue=usage_dlq,
+                    retry_attempts=185,
+                    max_event_age=Duration.hours(24),
+                ),
+                targets.LambdaFunction(
+                    spot_retry_fn,
+                    dead_letter_queue=spot_retry_dlq,
+                    retry_attempts=185,
+                    max_event_age=Duration.hours(24),
+                ),
+            ],
+        )
+
+        # -------------------------------------------------------------
+        # 13. Public attributes — surfaced for app.py / release
         # engineer / contract tests (task 19) via CFN outputs would go
         # here in a follow-up; at this task's scope they live on the
         # Python object only.
@@ -383,11 +701,35 @@ class OrchestratorStack(Stack):
         self.lifecycle_function_arn = lifecycle_fn.function_arn
         self.installation_events_queue_url = lifecycle_queue.queue_url
         self.installations_table_name = installations_table.table_name
+        self.usage_reporter_function_arn = usage_fn.function_arn
+        self.usage_reporter_dlq_url = usage_dlq.queue_url
+        self.spot_retry_function_arn = spot_retry_fn.function_arn
+        self.spot_retry_dlq_url = spot_retry_dlq.queue_url
+        self.spot_retries_table_name = spot_retries_table.table_name
 
 
 # ---------------------------------------------------------------------------
 # Private helpers — one per role, matching design.md §8.2 / §8.3.
 # ---------------------------------------------------------------------------
+
+
+def _function_log_group(
+    scope: Construct, construct_id: str, function_name: str
+) -> logs.LogGroup:
+    """Return the explicit ``/aws/lambda/<function_name>`` log group (cost-cuts Req 2.3, 2.4).
+
+    7-day retention; RETAIN so logs outlive a stack teardown (matching the
+    runner and webhook-receiver groups). A retained group must be deleted
+    before the stack is re-created after ``cdk destroy``, because the
+    deploy would otherwise fail on the name collision.
+    """
+    return logs.LogGroup(
+        scope,
+        construct_id,
+        log_group_name=f"/aws/lambda/{function_name}",
+        retention=logs.RetentionDays.ONE_WEEK,
+        removal_policy=RemovalPolicy.RETAIN,
+    )
 
 
 def _grant_orchestrator_permissions(
@@ -396,23 +738,30 @@ def _grant_orchestrator_permissions(
     verify_jobs_queue: sqs.IQueue,
     verify_jobs_dlq: sqs.IQueue,
     active_revision_param: ssm.IStringParameter,
-    app_private_key_secret: secretsmanager.ISecret,
+    app_private_key_parameter_arn: str,
+    usage_secret_parameter_arn: str,
     account_id: str,
 ) -> None:
-    """Attach the eight orchestrator IAM statements per design.md §8.2.
+    """Attach the orchestrator IAM statements per design.md §8.2.
 
-    Grants 1-2 and 6-7 are inline policy statements; grants 3-5 use the
-    CDK ``grant_*`` helpers which emit equivalent inline statements
-    scoped to the referenced resource. The order matches design.md
-    §8.2 one-for-one so a diff of the synth output maps to a diff of
-    this function body.
+    Grants 1-6 and 8 are Spec 3's and sandbox-minute-plans'. The former
+    Grants 7 (App key) and 9 (Usage_Secret) are replaced by one inline
+    ``SecureParameterRead`` statement: ``ssm:GetParameter`` on exactly the
+    App_Key_Parameter and Usage_Secret_Parameter ARNs (cost-cuts Req 4.2).
+
+    Grants 1-2, 6 and ``SecureParameterRead`` are inline policy
+    statements; grants 3-5 and 8 use the CDK ``grant_*`` helpers which
+    emit equivalent inline statements scoped to the referenced resource.
+    Grant 5 (``grant_read`` on the plain String active-revision parameter)
+    is not a Secure_Parameter grant and stays a separate statement.
 
     Args:
         role: The orchestrator Lambda's execution role.
         verify_jobs_queue: Spec 1's ``trikon-verify-jobs`` queue (imported).
         verify_jobs_dlq: Spec 1's ``trikon-verify-jobs-dlq`` queue (imported).
         active_revision_param: Spec 2's active-revision SSM parameter.
-        app_private_key_secret: The App private-key Secrets Manager secret.
+        app_private_key_parameter_arn: Parameter_ARN of the App key.
+        usage_secret_parameter_arn: Parameter_ARN of the Usage_Secret.
         account_id: The AWS account ID — resolved from ``Stack.of(role).account``
             at the call site. Used to construct the ECS + IAM resource
             ARNs for Grants 1, 2, and 6.
@@ -478,25 +827,142 @@ def _grant_orchestrator_permissions(
     # tighter alternative (per-message ``sts:AssumeRole`` into a
     # per-installation role) is deferred to M2 per design.md §11.
     role.add_to_principal_policy(
-        iam.PolicyStatement(
-            sid="NeverFailOpenVerdictWrite",
-            effect=iam.Effect.ALLOW,
-            actions=["dynamodb:PutItem"],
-            resources=[
-                f"arn:aws:dynamodb:us-east-1:{account_id}:table/trikon_verdicts",
-            ],
-            conditions={
-                "ForAllValues:StringLike": {
-                    "dynamodb:LeadingKeys": ["*"],
-                },
-            },
+        _verdict_write_statement("NeverFailOpenVerdictWrite", account_id),
+    )
+
+    # ``OrchestratorPrStateRead`` — ``dynamodb:GetItem`` on ``trikon_pr_state``
+    # so a failed Retry_Job dispatch completes the Interim_Check_Run the
+    # Runner recorded there (cost-cuts Req 11.5).
+    role.add_to_principal_policy(
+        _pr_state_read_statement(ORCHESTRATOR_PR_STATE_READ_SID, account_id),
+    )
+
+    # ``SecureParameterRead`` (replaces Grants 7 and 9) — ``ssm:GetParameter``
+    # on exactly the App key and Usage_Secret Parameter_ARNs (cost-cuts
+    # Req 4.2). The App key signs the GitHub JWT for the Never-Fail-Open
+    # Check Run POST (design.md §7.3); the Usage_Secret signs Usage_API
+    # requests (Req 11.16).
+    role.add_to_principal_policy(
+        _parameter_read_statement(
+            SECURE_PARAMETER_READ_SID,
+            [app_private_key_parameter_arn, usage_secret_parameter_arn],
         ),
     )
 
-    # Grant 7 — ``secretsmanager:GetSecretValue`` on the App private
-    # key. Used by the GitHub JWT minter to sign installation-scoped
-    # tokens for the Never-Fail-Open Check Run POST (design.md §7.3).
-    app_private_key_secret.grant_read(role)
+    # Grant 8 — busy re-enqueue (Req 11.18, 11.19). ``grant_send_messages``
+    # expands to ``sqs:SendMessage``, ``sqs:GetQueueAttributes`` and
+    # ``sqs:GetQueueUrl`` on the ``trikon-verify-jobs`` ARN only. The
+    # queue has no customer-managed KMS key, so no KMS grant is needed.
+    # The ``ChangeMessageVisibility`` fallback is covered by Grant 3.
+    verify_jobs_queue.grant_send_messages(role)
+
+
+def _grant_spot_retry_permissions(
+    role: iam.Role,
+    *,
+    app_private_key_parameter_arn: str,
+    verify_jobs_queue_arn: str,
+    spot_retries_table_arn: str,
+    account_id: str,
+) -> None:
+    """Attach the five inline Spot_Retry_Handler statements (cost-cuts design §5).
+
+    The sixth statement, ``sqs:SendMessage`` on ``trikon-cloud-spot-retry-dlq``,
+    is generated by CDK for the function's ``dead_letter_queue``. Every
+    statement here is a single-purpose inline grant on exact resources, so
+    the role gets no ``sqs:GetQueueAttributes`` / ``GetQueueUrl`` and no
+    SSM read beyond ``ssm:GetParameter`` on the App key (Req 4.7, 4.8).
+
+    Args:
+        role: The Spot_Retry_Handler Lambda's execution role.
+        app_private_key_parameter_arn: Parameter_ARN of the App key, read to
+            mint the GitHub JWT for Fail_Closed_Result Check Runs.
+        verify_jobs_queue_arn: ARN of ``trikon-verify-jobs``, the Retry_Job
+            destination (Req 9.7).
+        spot_retries_table_arn: ARN of the ``trikon-cloud-spot-retries``
+            claim table.
+        account_id: The AWS account ID, for the fleet table ARNs.
+    """
+    role.add_to_principal_policy(
+        _parameter_read_statement(
+            SPOT_RETRY_APP_KEY_PARAMETER_READ_SID, [app_private_key_parameter_arn]
+        ),
+    )
+    role.add_to_principal_policy(
+        iam.PolicyStatement(
+            sid=SPOT_RETRY_SEND_RETRY_JOB_SID,
+            effect=iam.Effect.ALLOW,
+            actions=["sqs:SendMessage"],
+            resources=[verify_jobs_queue_arn],
+        ),
+    )
+    role.add_to_principal_policy(
+        _verdict_write_statement(SPOT_RETRY_VERDICT_WRITE_SID, account_id),
+    )
+    role.add_to_principal_policy(
+        _pr_state_read_statement(SPOT_RETRY_PR_STATE_READ_SID, account_id),
+    )
+    role.add_to_principal_policy(
+        iam.PolicyStatement(
+            sid=SPOT_RETRY_CLAIMS_SID,
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "dynamodb:PutItem",
+                "dynamodb:GetItem",
+                "dynamodb:UpdateItem",
+            ],
+            resources=[spot_retries_table_arn],
+        ),
+    )
+
+
+def _verdict_write_statement(sid: str, account_id: str) -> iam.PolicyStatement:
+    """Return the fleet-role ``dynamodb:PutItem`` statement on ``trikon_verdicts``.
+
+    ``LeadingKeys=["*"]`` because fleet roles carry no
+    ``PrincipalTag/installation_id``; see Grant 6 in
+    :func:`_grant_orchestrator_permissions`.
+    """
+    return iam.PolicyStatement(
+        sid=sid,
+        effect=iam.Effect.ALLOW,
+        actions=["dynamodb:PutItem"],
+        resources=[
+            f"arn:aws:dynamodb:us-east-1:{account_id}:table/{_VERDICTS_TABLE}",
+        ],
+        conditions={
+            "ForAllValues:StringLike": {
+                "dynamodb:LeadingKeys": ["*"],
+            },
+        },
+    )
+
+
+def _pr_state_read_statement(sid: str, account_id: str) -> iam.PolicyStatement:
+    """Return ``dynamodb:GetItem`` on ``trikon_pr_state`` (Interim_Check_Run id)."""
+    return iam.PolicyStatement(
+        sid=sid,
+        effect=iam.Effect.ALLOW,
+        actions=["dynamodb:GetItem"],
+        resources=[
+            f"arn:aws:dynamodb:us-east-1:{account_id}:table/{_PR_STATE_TABLE}",
+        ],
+    )
+
+
+def _parameter_read_statement(sid: str, resources: list[str]) -> iam.PolicyStatement:
+    """Return an inline ``ssm:GetParameter`` statement on exactly ``resources``.
+
+    Secure_Parameter grants never use the ``grant_read`` helpers, which
+    would add ``ssm:DescribeParameters``, ``ssm:GetParameters`` and
+    ``ssm:GetParameterHistory`` (cost-cuts Req 4.8).
+    """
+    return iam.PolicyStatement(
+        sid=sid,
+        effect=iam.Effect.ALLOW,
+        actions=["ssm:GetParameter"],
+        resources=resources,
+    )
 
 
 def _grant_lifecycle_permissions(

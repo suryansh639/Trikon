@@ -222,17 +222,26 @@ class GithubInstallationPayload(BaseModel):
 class ReceiverEnvConfig(BaseSettings):
     """Lambda environment variables (design.md §5.3).
 
-    The three ``TRIKON_*`` queue/secret variables are supplied by the CDK
-    stack. ``AWS_REGION`` is supplied by the Lambda runtime. ``log_level``
-    and ``aws_region`` carry defaults so a local ``ReceiverEnvConfig()``
-    construction under test only needs the three secret/queue values set.
-    A missing / empty ``TRIKON_INSTALLATION_EVENTS_QUEUE_URL`` at Lambda
-    cold start raises :class:`pydantic.ValidationError`, mirroring the
-    shipping behaviour for ``TRIKON_VERIFY_JOBS_QUEUE_URL``
-    (Requirement 4.5).
+    The three ``TRIKON_*`` queue/parameter variables are supplied by the
+    CDK stack. ``AWS_REGION`` is supplied by the Lambda runtime.
+    ``log_level`` and ``aws_region`` carry defaults so a local
+    ``ReceiverEnvConfig()`` construction under test only needs the three
+    parameter/queue values set. A missing / empty
+    ``TRIKON_INSTALLATION_EVENTS_QUEUE_URL`` at Lambda cold start raises
+    :class:`pydantic.ValidationError`, mirroring the shipping behaviour
+    for ``TRIKON_VERIFY_JOBS_QUEUE_URL`` (Requirement 4.5).
+
+    ``webhook_secret_parameter_name`` is the SSM Parameter Store name of
+    the SecureString holding the GitHub webhook secret (for example
+    ``/trikon-cloud/github-webhook-secret``). It must be a ``/``-rooted
+    path; the name, not the value, is all the environment carries.
     """
 
-    webhook_secret_arn: str = Field(alias="TRIKON_WEBHOOK_SECRET_ARN")
+    webhook_secret_parameter_name: str = Field(
+        alias="TRIKON_WEBHOOK_SECRET_PARAMETER_NAME",
+        min_length=2,
+        pattern=r"^/",
+    )
     verify_jobs_queue_url: str = Field(alias="TRIKON_VERIFY_JOBS_QUEUE_URL")
     installation_events_queue_url: str = Field(
         alias="TRIKON_INSTALLATION_EVENTS_QUEUE_URL"

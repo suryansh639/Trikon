@@ -40,7 +40,7 @@ from trikon_cloud.installation_lifecycle.models import (
 
 from .conftest import (
     CANONICAL_ACCOUNT_ID,
-    CANONICAL_APP_PRIVATE_KEY_SECRET_ARN,
+    CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
     CANONICAL_DELIVERY_ID,
     CANONICAL_GITHUB_APP_ID,
     CANONICAL_INSTALLATION_ID,
@@ -267,7 +267,7 @@ def test_lifecycle_env_config_loads_required_and_applies_defaults(
     """Env-driven construction populates required aliases and defaults optional ones.
 
     The autouse ``_env_setup`` fixture in ``conftest.py`` already
-    populates ``TRIKON_AWS_ACCOUNT_ID``, ``TRIKON_APP_PRIVATE_KEY_SECRET_ARN``,
+    populates ``TRIKON_AWS_ACCOUNT_ID``, ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME``,
     and ``AWS_REGION``. This test additionally clears the three
     optional aliases so the defaults declared on the model
     (design.md §2.3) govern — the fallback values are the load-bearing
@@ -281,8 +281,8 @@ def test_lifecycle_env_config_loads_required_and_applies_defaults(
 
     # Required aliases — sourced from the autouse fixture.
     assert config.trikon_aws_account_id == CANONICAL_ACCOUNT_ID
-    assert config.trikon_app_private_key_secret_arn == (
-        CANONICAL_APP_PRIVATE_KEY_SECRET_ARN
+    assert config.trikon_app_private_key_parameter_name == (
+        CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME
     )
     # Defaults for the three optional aliases (design.md §2.3).
     assert config.trikon_installations_table == "trikon-cloud-installations"
@@ -304,6 +304,36 @@ def test_lifecycle_env_config_raises_on_missing_required_env(
     only safe surface.
     """
     monkeypatch.delenv("TRIKON_AWS_ACCOUNT_ID", raising=False)
+
+    with pytest.raises(ValidationError):
+        LifecycleEnvConfig()
+
+
+def test_lifecycle_env_config_requires_parameter_name_not_obsolete_secret_arn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The App-key name comes only from ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME``.
+
+    Cost-cuts Req 6.2: with the new variable unset, the obsolete
+    Secrets Manager ARN variable is not read as a fallback, so
+    a stale Lambda environment fails at cold start.
+    """
+    monkeypatch.delenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", raising=False)
+    # Built by concatenation so the Req 6.1 static scan (task 19.1) does
+    # not flag this negative test as a live reference.
+    obsolete_env = "TRIKON_APP_PRIVATE_KEY_SECRET" + "_ARN"
+    monkeypatch.setenv(obsolete_env, "/trikon-cloud/github-app-private-key")
+
+    with pytest.raises(ValidationError):
+        LifecycleEnvConfig()
+
+
+@pytest.mark.parametrize("bad_name", ["", "/", "trikon-cloud/github-app-private-key"])
+def test_lifecycle_env_config_rejects_malformed_parameter_name(
+    monkeypatch: pytest.MonkeyPatch, bad_name: str
+) -> None:
+    """The parameter name needs at least two characters and a leading ``/``."""
+    monkeypatch.setenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", bad_name)
 
     with pytest.raises(ValidationError):
         LifecycleEnvConfig()

@@ -64,8 +64,12 @@ CANONICAL_EVENT_TYPE: str = "pull_request.opened"
 CANONICAL_SENT_AT: str = "2024-11-14T12:34:56.789+00:00"
 CANONICAL_ACCOUNT_ID: str = "000000000000"
 CANONICAL_APP_ID: int = 999999
-CANONICAL_APP_PRIVATE_KEY_SECRET_ARN: str = (
-    "arn:aws:secretsmanager:us-east-1:000000000000:secret:trikon/app-key-abcdef"
+CANONICAL_REGION: str = "us-east-1"
+# App_Key_Parameter name (the cost-cuts default) and the Parameter_ARN the
+# Runtime_IAM_Renderer must emit for it in statement 3.
+CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME: str = "/trikon-cloud/github-app-private-key"
+CANONICAL_APP_PRIVATE_KEY_PARAMETER_ARN: str = (
+    "arn:aws:ssm:us-east-1:000000000000:parameter/trikon-cloud/github-app-private-key"
 )
 # Alias for :data:`CANONICAL_APP_ID` under the name the
 # ``installation_lifecycle`` package uses (``github_app_id`` on the
@@ -173,9 +177,9 @@ def _env_setup(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("TRIKON_AWS_ACCOUNT_ID", CANONICAL_ACCOUNT_ID)
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", CANONICAL_APP_PRIVATE_KEY_SECRET_ARN
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME
     )
-    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_REGION", CANONICAL_REGION)
 
 
 @pytest.fixture(autouse=True)

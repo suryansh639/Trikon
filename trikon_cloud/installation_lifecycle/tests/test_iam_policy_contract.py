@@ -30,7 +30,7 @@ Test surface — two cases (per tasks.md task 19):
 
 * ``test_iam_policy_byte_matches_cdk_synth_at_canonical_id`` — the
   single parametrized case at ``installation_id = 12345678``
-  (Requirement 13.4) and the canonical App-key ARN. This is the
+  (Requirement 13.4) and the canonical App-key parameter name. This is the
   minimum viable contract: if the sweep passes, this passes; if this
   fails, the sweep is uninformative.
 * ``test_iam_policy_byte_matches_cdk_synth_hypothesis_sweep`` — a
@@ -70,12 +70,13 @@ from trikon_cloud.installation_lifecycle.iam_template import (
 # Requirement 13.4 fixes the canonical single-case installation id.
 _CANONICAL_INSTALLATION_ID: int = 12345678
 
-# Requirement 13.4 fixes the canonical App private-key secret ARN. The
-# runtime renderer places this string verbatim into Statement 3's
-# ``Resource`` field; the CDK side embeds it via a Python f-string on
-# the same field. The two must agree byte-for-byte.
-_CANONICAL_APP_KEY_ARN: str = (
-    "arn:aws:secretsmanager:us-east-1:000000000000:secret:trikon/app-key-abcdef"
+# The canonical App_Key_Parameter name (the cost-cuts default). Both
+# sides turn it into Statement 3's ``Resource`` with
+# :func:`trikon_cloud.secure_params.parameter_arn`; the two must agree
+# byte-for-byte.
+_CANONICAL_APP_KEY_PARAMETER_NAME: str = "/trikon-cloud/github-app-private-key"
+_CANONICAL_APP_KEY_PARAMETER_ARN: str = (
+    "arn:aws:ssm:us-east-1:000000000000:parameter/trikon-cloud/github-app-private-key"
 )
 
 # design.md §10.5: the CDK App is bound to this account/region so the
@@ -98,7 +99,7 @@ _UNUSED_APP_ID: int = 999999
 # ---------------------------------------------------------------------------
 
 
-def _canonical_from_cdk(installation_id: int, app_key_arn: str) -> str:
+def _canonical_from_cdk(installation_id: int, app_key_parameter_name: str) -> str:
     """Synthesize the CDK stack and canonicalize the per-installation policy.
 
     Implements design.md §10.5 verbatim. Instantiates a fresh
@@ -122,13 +123,13 @@ def _canonical_from_cdk(installation_id: int, app_key_arn: str) -> str:
     stack = FargateRunnerStack(
         app,
         "TestStack",
-        app_private_key_secret_arn=app_key_arn,
+        app_private_key_parameter_name=app_key_parameter_name,
         app_id=_UNUSED_APP_ID,
         env=Environment(account=_TEST_ACCOUNT_ID, region=_TEST_REGION),
     )
     stack.build_task_role_for_installation(
         installation_id,
-        app_private_key_secret_arn=app_key_arn,
+        app_private_key_parameter_name=app_key_parameter_name,
     )
     template = Template.from_stack(stack)
     resources: Mapping[str, Mapping[str, Any]] = template.find_resources(
@@ -158,7 +159,7 @@ def _canonical_from_cdk(installation_id: int, app_key_arn: str) -> str:
     return json.dumps(policy_document, sort_keys=True, separators=(",", ":"))
 
 
-def _canonical_from_runtime(installation_id: int, app_key_arn: str) -> str:
+def _canonical_from_runtime(installation_id: int, app_key_parameter_name: str) -> str:
     """Render the per-installation policy at runtime and canonicalize.
 
     Invokes :func:`render_installation_policy_document` with the same
@@ -172,14 +173,14 @@ def _canonical_from_runtime(installation_id: int, app_key_arn: str) -> str:
     return canonical_json(
         render_installation_policy_document(
             installation_id,
-            app_private_key_secret_arn=app_key_arn,
+            app_private_key_parameter_name=app_key_parameter_name,
             account_id=_TEST_ACCOUNT_ID,
             region=_TEST_REGION,
         )
     )
 
 
-def _assert_byte_match(installation_id: int, app_key_arn: str) -> None:
+def _assert_byte_match(installation_id: int, app_key_parameter_name: str) -> None:
     """Assert byte-equivalence of the two canonical JSON strings.
 
     On mismatch, emits a unified :func:`difflib.ndiff` of the two
@@ -189,8 +190,8 @@ def _assert_byte_match(installation_id: int, app_key_arn: str) -> None:
     contrast — one line per side — annotated with ``-`` / ``+`` /
     ``?`` markers pinpointing the offending column.
     """
-    cdk_canonical = _canonical_from_cdk(installation_id, app_key_arn)
-    runtime_canonical = _canonical_from_runtime(installation_id, app_key_arn)
+    cdk_canonical = _canonical_from_cdk(installation_id, app_key_parameter_name)
+    runtime_canonical = _canonical_from_runtime(installation_id, app_key_parameter_name)
 
     if cdk_canonical != runtime_canonical:
         diff = "\n".join(
@@ -198,7 +199,7 @@ def _assert_byte_match(installation_id: int, app_key_arn: str) -> None:
         )
         raise AssertionError(
             "IAM policy byte-match failure "
-            f"(installation_id={installation_id}, app_key_arn={app_key_arn!r}). "
+            f"(installation_id={installation_id}, app_key_parameter_name={app_key_parameter_name!r}). "
             "Runtime iam_template.py has drifted from Spec 2's CDK synth "
             "(design.md §6.5). ndiff (- CDK / + runtime):\n" + diff
         )
@@ -215,11 +216,11 @@ def test_iam_policy_byte_matches_cdk_synth_at_canonical_id() -> None:
     Validates: Requirements 13.1, 13.2, 13.3, 13.4, 17.4.
 
     Pinned canonical case at ``installation_id = 12345678`` and the
-    canonical App private-key ARN (Requirement 13.4). The single-case
+    canonical App_Key_Parameter name (Requirement 13.4). The single-case
     variant is the minimum viable byte-match contract; the hypothesis
     sweep below stress-tests it across the ``installation_id`` space.
     """
-    _assert_byte_match(_CANONICAL_INSTALLATION_ID, _CANONICAL_APP_KEY_ARN)
+    _assert_byte_match(_CANONICAL_INSTALLATION_ID, _CANONICAL_APP_KEY_PARAMETER_NAME)
 
 
 @given(installation_id=st.integers(min_value=1, max_value=2**63 - 1))
@@ -243,4 +244,41 @@ def test_iam_policy_byte_matches_cdk_synth_hypothesis_sweep(
     the dominant term, well beyond hypothesis's default 200 ms
     deadline.
     """
-    _assert_byte_match(installation_id, _CANONICAL_APP_KEY_ARN)
+    _assert_byte_match(installation_id, _CANONICAL_APP_KEY_PARAMETER_NAME)
+
+
+# ---------------------------------------------------------------------------
+# App-key statement pins (trikon-cloud-cost-cuts Req 4.4, 4.5, 4.8).
+# ---------------------------------------------------------------------------
+
+
+def test_cdk_app_key_statement_is_exact_ssm_get_parameter() -> None:
+    """The CDK side grants exactly ``ssm:GetParameter`` on the App_Key_Parameter ARN.
+
+    The byte-match alone would pass if both sides drifted together, so
+    this pins the synthesized statement 3 itself: one action, one
+    resource, no condition, and no ``kms:Decrypt`` anywhere.
+    """
+    policy = json.loads(
+        _canonical_from_cdk(_CANONICAL_INSTALLATION_ID, _CANONICAL_APP_KEY_PARAMETER_NAME)
+    )
+    statements = policy["Statement"]
+    assert len(statements) == 4
+    assert statements[3] == {
+        "Action": "ssm:GetParameter",
+        "Effect": "Allow",
+        "Resource": _CANONICAL_APP_KEY_PARAMETER_ARN,
+    }
+    actions = [
+        action
+        for stmt in statements
+        for action in (
+            stmt["Action"] if isinstance(stmt["Action"], list) else [stmt["Action"]]
+        )
+    ]
+    assert not any(action.startswith("kms:") for action in actions)
+
+
+def test_iam_policy_byte_matches_cdk_synth_with_custom_parameter_name() -> None:
+    """A non-default App_Key_Parameter name keeps the two sides in sync."""
+    _assert_byte_match(_CANONICAL_INSTALLATION_ID, "/acme/prod/app.key_v2")

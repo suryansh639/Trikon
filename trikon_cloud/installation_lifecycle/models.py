@@ -112,17 +112,22 @@ class LifecycleEnvConfig(BaseSettings):
     consumed — a misconfigured Lifecycle_Handler MUST NOT dequeue
     events it cannot process.
 
-    ``TRIKON_AWS_ACCOUNT_ID`` and ``TRIKON_APP_PRIVATE_KEY_SECRET_ARN``
+    ``TRIKON_AWS_ACCOUNT_ID`` and ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME``
     are baked into the runtime IAM policy the Runtime_IAM_Renderer
     emits (see ``iam_template.py``); the other three carry defaults
     so local test construction only needs the two required values set.
+
+    The Lifecycle_Handler only passes the App_Key_Parameter *name* to the
+    renderer; it never reads the parameter value (cost-cuts Req 4.7).
     """
 
     model_config = SettingsConfigDict(extra="ignore", frozen=True)
 
     trikon_aws_account_id: str = Field(alias="TRIKON_AWS_ACCOUNT_ID")
-    trikon_app_private_key_secret_arn: str = Field(
-        alias="TRIKON_APP_PRIVATE_KEY_SECRET_ARN"
+    trikon_app_private_key_parameter_name: str = Field(
+        alias="TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME",
+        min_length=2,
+        pattern=r"^/",
     )
     trikon_installations_table: str = Field(
         default="trikon-cloud-installations", alias="TRIKON_INSTALLATIONS_TABLE"

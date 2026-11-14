@@ -28,10 +28,25 @@ Lint:
 uv run ruff check trikon_cloud/webhook_receiver/
 ```
 
-## Deploy
+## Webhook secret
+
+The receiver reads the GitHub webhook secret from the SSM Parameter Store `SecureString` parameter named by `TRIKON_WEBHOOK_SECRET_PARAMETER_NAME` (`ssm:GetParameter` with `WithDecryption=True`, cached per warm container). The default name is `/trikon-cloud/github-webhook-secret`; override it with `-c webhook_secret_parameter_name=/custom/name`. The stack never creates the parameter. The operator creates it (standard tier, AWS-managed `aws/ssm` key) before the first deploy:
 
 ```bash
-cdk deploy WebhookReceiverStack
+aws ssm put-parameter --region us-east-1 --name /trikon-cloud/github-webhook-secret \
+  --type SecureString --tier Standard --value '<webhook-secret>'
 ```
 
-This is a manual release-engineer gate — not part of implementation tasks.
+The obsolete `webhook_secret_arn` context key fails synthesis.
+
+## Deploy
+
+Deploy Trikon Cloud only once hosted PR checks are wanted. The deploy order is `FargateRunnerStack`, then `WebhookReceiverStack`, then `TrikonCloudOrchestratorStack`.
+
+```bash
+cdk deploy WebhookReceiverStack \
+  -c installation_events_queue_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-cloud-installation-events \
+  --app "python -m trikon_cloud.webhook_receiver.infra.app"
+```
+
+This is a manual release-engineer gate — not part of implementation tasks. The full runbook (prerequisites, parameters, 7-day log retention, rollback) is [`infra/README.md`](infra/README.md).

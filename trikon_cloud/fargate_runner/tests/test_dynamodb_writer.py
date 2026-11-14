@@ -50,6 +50,11 @@ from trikon_cloud.fargate_runner.dynamodb_writer import (
 )
 from trikon_cloud.fargate_runner.models import PrStateRow, VerdictRow
 
+# The writer builds its boto3 clients without an explicit region, so pin the
+# fake credentials and region here instead of relying on the ambient
+# ``~/.aws/config`` (the tests must pass with no AWS configuration at all).
+pytestmark = pytest.mark.usefixtures("mock_aws_env")
+
 # ---------------------------------------------------------------------------
 # Canonical row builder — every test tweaks a subset of fields.
 # ---------------------------------------------------------------------------

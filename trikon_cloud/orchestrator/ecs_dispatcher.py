@@ -24,9 +24,11 @@ Four concern groups mirror design.md's §4 layout:
   ``ecs.RunTask`` request body prescribed by design §3.3 from a
   validated :class:`SqsJobMessage`, the loaded
   :class:`OrchestratorEnvConfig`, and the resolver-supplied
-  ``family:revision`` string. The seven ``EnvOverride`` entries and the
-  three ``EcsTag`` entries are emitted in fixed order — Requirements
-  5.2 and 3.5.
+  ``family:revision`` string. The ten ``EnvOverride`` entries (the
+  seven of Requirement 5.2, then ``TRIKON_RESERVATION_ID``,
+  ``TRIKON_ATTEMPT`` and ``TRIKON_CAPACITY``) and the three ``EcsTag``
+  entries are emitted in fixed order — Requirements 5.2 and 3.5,
+  sandbox-minute-plans Req 11.3, trikon-cloud-cost-cuts Req 8.6.
 * :func:`submit_run_task` — the single side-effect. One
   ``ecs.RunTask`` call per invocation (Requirement 3.1). ``ClientError``
   propagates unhandled so the handler can classify it.
@@ -52,8 +54,15 @@ from typing import Literal, Protocol
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict
 
+from trikon_cloud.fargate_runner.spot_contract import (
+    ATTEMPT_ENV,
+    CAPACITY_ENV,
+    Attempt,
+    Capacity,
+)
 from trikon_cloud.orchestrator.models import (
     AwsvpcConfiguration,
+    CapacityProviderStrategyItem,
     ContainerOverride,
     EcsTag,
     EnvOverride,
@@ -79,6 +88,7 @@ __all__ = [  # noqa: RUF022
     "SsmClientProtocol",
     "TransientDispatchError",
     "TerminalDispatchError",
+    "RunTaskNoTaskError",
 ]
 
 
@@ -108,6 +118,19 @@ class TerminalDispatchError(Exception):
     that prefer an exception-driven Terminal branch have a named type
     to catch on.
     """
+
+
+class RunTaskNoTaskError(Exception):
+    """``ecs.RunTask`` returned no task (``tasks == []``), e.g. no Spot capacity.
+
+    RunTask reports placement failures in ``failures`` rather than as a
+    ``ClientError``. Carries only ``failures[0].reason`` (an AWS-controlled
+    string, or ``None``), never the response body (cost-cuts design D5).
+    """
+
+    def __init__(self, reason: str | None) -> None:
+        super().__init__("ecs.RunTask returned no task")
+        self.reason: str | None = reason
 
 
 # ---------------------------------------------------------------------------
@@ -165,18 +188,32 @@ class _RunTaskTask(BaseModel):
     taskArn: str
 
 
+class _RunTaskFailure(BaseModel):
+    """One entry of ``RunTaskResponse.failures``.
+
+    Internal helper — not re-exported. ``extra="allow"`` because AWS also
+    sends ``arn`` and ``detail``. Only ``reason`` is read.
+    """
+
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    reason: str | None = None
+
+
 class RunTaskResponse(BaseModel):
     """Validated view over the ``ecs.RunTask`` response body.
 
     ``extra="allow"`` so AWS response drift is non-breaking — new
-    top-level fields (``failures``, ``ResponseMetadata`` …) neither
-    reject validation nor force schema changes here. The single field
-    the dispatcher reads is ``tasks[0].taskArn`` per design §4.1 STEP 8.
+    top-level fields (``ResponseMetadata`` …) neither reject validation
+    nor force schema changes here. The dispatcher reads
+    ``tasks[0].taskArn`` per design §4.1 STEP 8 and, when ``tasks`` is
+    empty, ``failures[0].reason`` (cost-cuts design D5).
     """
 
     model_config = ConfigDict(extra="allow", frozen=True)
 
     tasks: tuple[_RunTaskTask, ...]
+    failures: tuple[_RunTaskFailure, ...] = ()
 
 
 class _SsmParameter(BaseModel):
@@ -287,6 +324,9 @@ def build_run_task_call(
     *,
     env: OrchestratorEnvConfig,
     task_definition: str,
+    reservation_id: str,
+    attempt: Attempt,
+    capacity: Capacity,
 ) -> RunTaskCall:
     """Build the ``ecs.RunTask`` request body prescribed by design §3.3.
 
@@ -294,25 +334,37 @@ def build_run_task_call(
     already-loaded ``env``. Every :class:`RunTaskCall` field is
     populated to the concrete-payload example in design §3.3:
 
-    * ``cluster``, ``launchType``, ``count`` — pinned literals.
+    * ``cluster``, ``count`` — pinned literals.
+    * ``capacityProviderStrategy`` — always exactly one entry,
+      ``{"capacityProvider": capacity, "weight": 1}``; ``launchType`` is
+      never set, so the cluster's default strategy never applies
+      (trikon-cloud-cost-cuts D5, Req 8.3-8.5).
     * ``taskDefinition`` — the resolver-supplied
       ``trikon-verify-runner:<revision>`` (Requirement 4.1).
     * ``networkConfiguration.awsvpcConfiguration`` — subnets and
       security groups from :attr:`OrchestratorEnvConfig`,
-      ``assignPublicIp="DISABLED"`` (Requirement 3.3).
+      ``assignPublicIp="ENABLED"``: runner tasks run in public subnets
+      with no NAT gateway (sandbox-minute-plans Req 14.5, 14.6).
     * ``overrides.taskRoleArn`` — the per-installation role ARN
       formatted per Requirement 3.4:
       ``arn:aws:iam::{account_id}:role/trikon-verify-task-role-{installation_id}``.
     * ``overrides.containerOverrides`` — exactly one entry
-      (``name="runner"``, Requirement 5.1) whose ``environment`` is a
-      seven-tuple in the fixed order pinned by Requirement 5.2:
-      ``TRIKON_INSTALLATION_ID``, ``TRIKON_REPO_FULL_NAME``,
-      ``TRIKON_PR_NUMBER``, ``TRIKON_HEAD_SHA``, ``TRIKON_BASE_SHA``,
-      ``TRIKON_EVENT_TYPE``, ``TRIKON_DELIVERY_ID``. Integer fields
-      serialize via :func:`str`; string fields are copied byte-for-byte
-      from :class:`SqsJobMessage` — no normalization (Requirement 5.4).
+      (``name="runner"``, Requirement 5.1) whose ``environment`` is an
+      eight-tuple in fixed order: the seven entries pinned by
+      Requirement 5.2 (``TRIKON_INSTALLATION_ID``,
+      ``TRIKON_REPO_FULL_NAME``, ``TRIKON_PR_NUMBER``,
+      ``TRIKON_HEAD_SHA``, ``TRIKON_BASE_SHA``, ``TRIKON_EVENT_TYPE``,
+      ``TRIKON_DELIVERY_ID``), then ``TRIKON_RESERVATION_ID``, then
+      ``TRIKON_ATTEMPT`` and ``TRIKON_CAPACITY`` (cost-cuts Req 8.6) —
+      ten entries in total. The
+      Usage_Reporter reads ``TRIKON_DELIVERY_ID`` (the Run_Id) and
+      ``TRIKON_RESERVATION_ID`` from the stopped task's overrides
+      (sandbox-minute-plans Req 11.3). Integer fields serialize via
+      :func:`str`; string fields are copied byte-for-byte — no
+      normalization (Requirement 5.4).
     * ``tags`` — a 3-tuple in the fixed order ``installation_id``,
-      ``repo``, ``pr`` (Requirement 3.5).
+      ``repo``, ``pr`` (Requirement 3.5). Unchanged by the
+      Reservation_Id.
 
     Args:
         message: Validated inbound SQS job message. All seven of its
@@ -323,11 +375,19 @@ def build_run_task_call(
         task_definition: Fully qualified ``family:revision`` string
             returned by :meth:`TaskDefinitionResolver.resolve`. Never
             contains ``:LATEST`` (Requirement 4.2).
+        reservation_id: The Reservation_Id from the Quota_Endpoint's
+            ``allowed`` decision for this Run_Id. Copied verbatim into
+            ``TRIKON_RESERVATION_ID``.
+        attempt: The Job_Message Attempt (1 or 2), copied as
+            ``TRIKON_ATTEMPT``.
+        capacity: ``FARGATE_SPOT`` or ``FARGATE`` from
+            :func:`~trikon_cloud.fargate_runner.spot_contract.select_capacity`;
+            sets the strategy and ``TRIKON_CAPACITY``.
 
     Returns:
         A frozen :class:`RunTaskCall` whose
-        ``.model_dump(by_alias=True, mode="json")`` is the exact
-        boto3 kwargs dict.
+        ``.model_dump(by_alias=True, mode="json", exclude_none=True)`` is
+        the exact boto3 kwargs dict.
     """
     task_role_arn = (
         f"arn:aws:iam::{env.trikon_aws_account_id}"
@@ -341,17 +401,22 @@ def build_run_task_call(
         EnvOverride(name="TRIKON_BASE_SHA", value=message.base_sha),
         EnvOverride(name="TRIKON_EVENT_TYPE", value=message.event_type),
         EnvOverride(name="TRIKON_DELIVERY_ID", value=message.delivery_id),
+        EnvOverride(name="TRIKON_RESERVATION_ID", value=reservation_id),
+        EnvOverride(name=ATTEMPT_ENV, value=str(attempt)),
+        EnvOverride(name=CAPACITY_ENV, value=capacity),
     )
     return RunTaskCall(
         cluster="trikon-verify-cluster",
         taskDefinition=task_definition,
-        launchType="FARGATE",
+        capacityProviderStrategy=(
+            CapacityProviderStrategyItem(capacityProvider=capacity, weight=1),
+        ),
         count=1,
         networkConfiguration=NetworkConfiguration(
             awsvpcConfiguration=AwsvpcConfiguration(
                 subnets=env.trikon_runner_subnet_ids,
                 securityGroups=env.trikon_runner_security_group_ids,
-                assignPublicIp="DISABLED",
+                assignPublicIp="ENABLED",
             ),
         ),
         overrides=RunTaskOverrides(
@@ -381,17 +446,19 @@ def submit_run_task(
     """Invoke ``ecs.RunTask`` exactly once (Requirement 3.1).
 
     Serializes the :class:`RunTaskCall` via
-    ``model_dump(by_alias=True, mode="json")`` so field names match the
-    boto3 wire form (``taskDefinition``, ``networkConfiguration``,
-    ``awsvpcConfiguration`` …) and tuples serialize to JSON arrays that
-    boto3 accepts as lists. Validates the response through
-    :class:`RunTaskResponse` — ``extra="allow"`` absorbs response drift
-    — and returns the first task ARN.
+    ``model_dump(by_alias=True, mode="json", exclude_none=True)`` so field
+    names match the boto3 wire form (``taskDefinition``,
+    ``networkConfiguration``, ``awsvpcConfiguration`` …), tuples serialize
+    to JSON arrays that boto3 accepts as lists, and the unused placement
+    key is omitted (boto3 rejects ``None`` parameter values). Validates the
+    response through :class:`RunTaskResponse` — ``extra="allow"`` absorbs
+    response drift — and returns the first task ARN.
 
     ``botocore.exceptions.ClientError`` from ``run_task`` propagates
     unhandled. The handler catches it, classifies via
     :func:`classify_client_error`, and drives the Transient/Terminal
-    branches per design §4.1 STEP 7.
+    branches per design §4.1 STEP 7. A response with no task (e.g. Spot
+    capacity unavailable) raises :class:`RunTaskNoTaskError`.
 
     Args:
         call: The prepared :class:`RunTaskCall` from
@@ -403,9 +470,18 @@ def submit_run_task(
         :class:`RunTaskDispatchResult` carrying the dispatched task's
         ARN — logged on the ``run_task_dispatched`` INFO record
         (Requirement 9.4).
+
+    Raises:
+        RunTaskNoTaskError: ``tasks`` is empty. Carries
+            ``failures[0].reason`` when present.
     """
-    response = ecs_client.run_task(**call.model_dump(by_alias=True, mode="json"))
+    response = ecs_client.run_task(
+        **call.model_dump(by_alias=True, mode="json", exclude_none=True)
+    )
     parsed = RunTaskResponse.model_validate(response)
+    if not parsed.tasks:
+        reason = parsed.failures[0].reason if parsed.failures else None
+        raise RunTaskNoTaskError(reason)
     return RunTaskDispatchResult(task_arn=parsed.tasks[0].taskArn)
 
 

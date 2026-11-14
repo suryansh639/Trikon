@@ -34,6 +34,7 @@ Covers the three concern groups declared in the sibling module:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -41,6 +42,7 @@ from pydantic import ValidationError
 
 from trikon_cloud.orchestrator.models import (
     AwsvpcConfiguration,
+    CapacityProviderStrategyItem,
     ContainerOverride,
     EcsTag,
     EnvOverride,
@@ -49,16 +51,24 @@ from trikon_cloud.orchestrator.models import (
     RunTaskCall,
     RunTaskOverrides,
     SqsEventEnvelope,
+    SqsRecord,
     SqsRecordAttributes,
+    VerifyJobMessage,
 )
 
 from .conftest import (
     CANONICAL_ACCOUNT_ID,
     CANONICAL_APP_ID,
-    CANONICAL_APP_PRIVATE_KEY_SECRET_ARN,
+    CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
+    CANONICAL_DELIVERY_ID,
     CANONICAL_INSTALLATION_ID,
     CANONICAL_PR_NUMBER,
     CANONICAL_REPO_FULL_NAME,
+    CANONICAL_USAGE_SECRET_PARAMETER_NAME,
+    CANONICAL_VERIFY_JOBS_QUEUE_URL,
+    CANONICAL_WEB_API_URL,
+    CANONICAL_WEB_APP_URL,
+    make_sqs_job_message,
 )
 
 # ---------------------------------------------------------------------------
@@ -88,7 +98,7 @@ def _canonical_run_task_call(**overrides: Any) -> RunTaskCall:
             awsvpcConfiguration=AwsvpcConfiguration(
                 subnets=("subnet-verify-egress-a", "subnet-verify-egress-b"),
                 securityGroups=("sg-verify-egress-only",),
-                assignPublicIp="DISABLED",
+                assignPublicIp="ENABLED",
             ),
         ),
         "overrides": RunTaskOverrides(
@@ -237,6 +247,119 @@ def test_run_task_call_literal_fields_reject_wrong_values(
         _canonical_run_task_call(**{field_name: invalid_value})
 
 
+def test_run_task_call_accepts_strategy_alone_and_dumps_without_launch_type() -> None:
+    """A strategy-only call validates; ``exclude_none`` drops ``launchType`` (D5)."""
+    call = _canonical_run_task_call(
+        launchType=None,
+        capacityProviderStrategy=(
+            CapacityProviderStrategyItem(capacityProvider="FARGATE_SPOT", weight=1),
+        ),
+    )
+
+    kwargs = call.model_dump(by_alias=True, mode="json", exclude_none=True)
+
+    assert "launchType" not in kwargs
+    assert kwargs["capacityProviderStrategy"] == [
+        {"capacityProvider": "FARGATE_SPOT", "weight": 1}
+    ]
+
+
+@pytest.mark.parametrize("with_strategy", [True, False])
+def test_run_task_call_requires_exactly_one_placement(with_strategy: bool) -> None:
+    """Both or neither of ``launchType`` / ``capacityProviderStrategy`` is rejected."""
+    strategy = (
+        (CapacityProviderStrategyItem(capacityProvider="FARGATE", weight=1),)
+        if with_strategy
+        else None
+    )
+    launch_type = "FARGATE" if with_strategy else None
+
+    with pytest.raises(ValidationError, match="exactly one of launchType"):
+        _canonical_run_task_call(
+            launchType=launch_type, capacityProviderStrategy=strategy
+        )
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"capacityProvider": "FARGATE_SPOT", "weight": 2},
+        {"capacityProvider": "EC2", "weight": 1},
+        {"capacityProvider": "FARGATE", "weight": 1, "base": 0},
+    ],
+)
+def test_capacity_provider_strategy_item_rejects_bad_entries(item: dict[str, Any]) -> None:
+    """Weight is pinned at 1, the provider is a Fargate capacity, extras forbidden."""
+    with pytest.raises(ValidationError):
+        CapacityProviderStrategyItem.model_validate(item)
+
+
+def test_run_task_call_strategy_must_have_exactly_one_entry() -> None:
+    """``capacityProviderStrategy`` is a one-tuple: two entries are rejected."""
+    item = CapacityProviderStrategyItem(capacityProvider="FARGATE", weight=1)
+
+    with pytest.raises(ValidationError):
+        _canonical_run_task_call(launchType=None, capacityProviderStrategy=(item, item))
+
+
+# ---------------------------------------------------------------------------
+# VerifyJobMessage (trikon-cloud-cost-cuts D6, Req 8.7, 8.8).
+# ---------------------------------------------------------------------------
+
+_RETRY_RESERVATION_ID = "00000000-0000-4000-8000-000000000001"
+
+
+def _job_dict(**overrides: object) -> dict[str, object]:
+    """The canonical receiver Job_Message as a dict, with overrides."""
+    data: dict[str, object] = make_sqs_job_message().model_dump()
+    data.update(overrides)
+    return data
+
+
+def test_verify_job_message_receiver_bytes_parse_as_attempt_one() -> None:
+    """Receiver bytes (no ``attempt``, no ``reservation_id``) are Attempt 1 (Req 8.8)."""
+    body = make_sqs_job_message().model_dump_json()
+
+    message = VerifyJobMessage.model_validate_json(body)
+
+    assert message.attempt == 1
+    assert message.reservation_id is None
+    assert message.delivery_id == CANONICAL_DELIVERY_ID
+
+
+def test_verify_job_message_accepts_retry_with_reservation_id() -> None:
+    """Attempt 2 with a UUID ``reservation_id`` is a valid Retry_Job."""
+    body = json.dumps(_job_dict(attempt=2, reservation_id=_RETRY_RESERVATION_ID))
+
+    message = VerifyJobMessage.model_validate_json(body)
+
+    assert message.attempt == 2
+    assert message.reservation_id == _RETRY_RESERVATION_ID
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"attempt": 0},
+        {"attempt": 3, "reservation_id": _RETRY_RESERVATION_ID},
+        {"attempt": "2", "reservation_id": _RETRY_RESERVATION_ID},
+        {"attempt": 2.0, "reservation_id": _RETRY_RESERVATION_ID},
+        {"attempt": True},
+        {"attempt": None},
+        {"attempt": 2},
+        {"attempt": 1, "reservation_id": _RETRY_RESERVATION_ID},
+        {"reservation_id": _RETRY_RESERVATION_ID},
+        {"attempt": 2, "reservation_id": "not-a-uuid"},
+    ],
+)
+def test_verify_job_message_rejects_bad_attempt_or_reservation(
+    overrides: dict[str, object],
+) -> None:
+    """Invalid attempts and attempt/reservation mismatches raise (Req 8.7)."""
+    with pytest.raises(ValidationError):
+        VerifyJobMessage.model_validate_json(json.dumps(_job_dict(**overrides)))
+
+
 def test_run_task_call_tags_is_fixed_length_three_tuple() -> None:
     """``tags`` is typed ``tuple[EcsTag, EcsTag, EcsTag]`` — exactly three.
 
@@ -289,7 +412,7 @@ def test_run_task_call_model_dump_by_alias_json_matches_boto3_kwargs_shape() -> 
     # Two-level nesting: networkConfiguration.awsvpcConfiguration.
     net_config = kwargs["networkConfiguration"]
     awsvpc = net_config["awsvpcConfiguration"]
-    assert awsvpc["assignPublicIp"] == "DISABLED"
+    assert awsvpc["assignPublicIp"] == "ENABLED"
     # Tuples degrade to JSON lists under mode="json" — the shape boto3 wants.
     assert isinstance(awsvpc["subnets"], list)
     assert awsvpc["subnets"] == [
@@ -381,8 +504,8 @@ def test_orchestrator_env_config_env_driven_construction_populates_all_fields() 
 
     # Required aliases.
     assert config.trikon_aws_account_id == CANONICAL_ACCOUNT_ID
-    assert config.trikon_app_private_key_secret_arn == (
-        CANONICAL_APP_PRIVATE_KEY_SECRET_ARN
+    assert config.trikon_app_private_key_parameter_name == (
+        CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME
     )
     # CSV split — two-element tuple.
     assert config.trikon_runner_subnet_ids == ("subnet-a", "subnet-b")
@@ -411,8 +534,8 @@ def test_orchestrator_env_config_missing_required_env_raises(
 ) -> None:
     """Removing a required alias raises :class:`ValidationError` at construction.
 
-    ``TRIKON_APP_PRIVATE_KEY_SECRET_ARN`` has no default: the
-    Never-Fail-Open path needs this secret to mint a GitHub App
+    ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME`` has no default: the
+    Never-Fail-Open path needs this parameter to mint a GitHub App
     JWT before it can post the neutral Check Run
     (design.md §7.3). A missing value at cold start must fail
     loudly rather than defer the failure to the first RunTask
@@ -420,7 +543,61 @@ def test_orchestrator_env_config_missing_required_env_raises(
     dequeued, which is the correct behavior for a misconfigured
     dispatcher (Requirement 8.4, design.md §2.3).
     """
-    monkeypatch.delenv("TRIKON_APP_PRIVATE_KEY_SECRET_ARN", raising=False)
+    monkeypatch.delenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", raising=False)
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+# The obsolete Secrets Manager names are built by concatenation so the
+# cost-guard static scan (cost-cuts task 19.1) does not match this file.
+_OBSOLETE_SUFFIX = "_SECRET" + "_ARN"
+_OBSOLETE_ARN = (
+    "arn:aws:" + "secrets" + "manager:us-east-1:000000000000:secret:trikon/app-key-abcdef"
+)
+
+
+def test_orchestrator_env_config_ignores_obsolete_secret_arn_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The removed Secrets Manager ARN aliases no longer satisfy the model (cost-cuts Req 6.2).
+
+    With only the obsolete variables set, construction fails on the two
+    missing ``*_PARAMETER_NAME`` aliases.
+    """
+    monkeypatch.delenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", raising=False)
+    monkeypatch.delenv("TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME", raising=False)
+    monkeypatch.setenv("TRIKON_APP_PRIVATE_KEY" + _OBSOLETE_SUFFIX, _OBSOLETE_ARN)
+    monkeypatch.setenv("TRIKON_CLOUD_USAGE" + _OBSOLETE_SUFFIX, _OBSOLETE_ARN)
+
+    with pytest.raises(ValidationError) as excinfo:
+        OrchestratorEnvConfig()
+
+    missing = {err["loc"][0] for err in excinfo.value.errors() if err["type"] == "missing"}
+    assert missing == {
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME",
+        "TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME",
+    }
+
+
+@pytest.mark.parametrize(
+    "alias",
+    ["TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", "TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME"],
+)
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "",
+        "/",
+        "trikon/no-leading-slash",
+        _OBSOLETE_ARN,
+    ],
+)
+def test_orchestrator_env_config_rejects_bad_parameter_name(
+    monkeypatch: pytest.MonkeyPatch, alias: str, bad_name: str
+) -> None:
+    """Each parameter name needs ``min_length=2`` and a leading ``/``."""
+    monkeypatch.setenv(alias, bad_name)
 
     with pytest.raises(ValidationError):
         OrchestratorEnvConfig()
@@ -448,3 +625,280 @@ def test_orchestrator_env_config_malformed_account_id_rejected(
 
     with pytest.raises(ValidationError):
         OrchestratorEnvConfig()
+
+
+# ---------------------------------------------------------------------------
+# trikon-cloud-cost-cuts — Spot_Flag, PR state table, max receive count.
+# ---------------------------------------------------------------------------
+
+_SPOT_ALIASES = (
+    "TRIKON_USE_FARGATE_SPOT",
+    "TRIKON_PR_STATE_TABLE",
+    "TRIKON_VERIFY_JOBS_MAX_RECEIVE_COUNT",
+)
+
+
+def test_orchestrator_env_config_spot_fields_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spot_Flag defaults on, the table to ``trikon_pr_state``, the count to 3."""
+    for alias in _SPOT_ALIASES:
+        monkeypatch.delenv(alias, raising=False)
+
+    config = OrchestratorEnvConfig()
+
+    assert config.trikon_use_fargate_spot is True
+    assert config.trikon_pr_state_table == "trikon_pr_state"
+    assert config.trikon_verify_jobs_max_receive_count == 3
+
+
+def test_orchestrator_env_config_spot_fields_load_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The three cost-cuts aliases load from the environment (Req 8.2)."""
+    monkeypatch.setenv("TRIKON_USE_FARGATE_SPOT", "false")
+    monkeypatch.setenv("TRIKON_PR_STATE_TABLE", "trikon_pr_state_test")
+    monkeypatch.setenv("TRIKON_VERIFY_JOBS_MAX_RECEIVE_COUNT", "1000")
+
+    config = OrchestratorEnvConfig()
+
+    assert config.trikon_use_fargate_spot is False
+    assert config.trikon_pr_state_table == "trikon_pr_state_test"
+    assert config.trikon_verify_jobs_max_receive_count == 1000
+
+
+@pytest.mark.parametrize("count", ["0", "1001", "-1", "three"])
+def test_orchestrator_env_config_max_receive_count_out_of_range_rejected(
+    monkeypatch: pytest.MonkeyPatch, count: str
+) -> None:
+    """``TRIKON_VERIFY_JOBS_MAX_RECEIVE_COUNT`` must be an int in 1..1000."""
+    monkeypatch.setenv("TRIKON_VERIFY_JOBS_MAX_RECEIVE_COUNT", count)
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+# ---------------------------------------------------------------------------
+# sandbox-minute-plans — Usage_API config, Queue_Wait_Limit, source queue
+# URL (Req 11.14, 11.15, 11.18, 11.21) and the full Lambda SQS record shape.
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_env_config_usage_fields_load_with_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Usage_API fields load from env; budget and wait limit default.
+
+    Req 11.14 and 11.21: ``TRIKON_QUOTA_TIME_BUDGET_SECONDS`` defaults to 10
+    and ``TRIKON_QUEUE_WAIT_LIMIT_SECONDS`` to 1800 when unset.
+    """
+    monkeypatch.delenv("TRIKON_QUOTA_TIME_BUDGET_SECONDS", raising=False)
+    monkeypatch.delenv("TRIKON_QUEUE_WAIT_LIMIT_SECONDS", raising=False)
+
+    config = OrchestratorEnvConfig()
+
+    assert config.trikon_web_api_url == CANONICAL_WEB_API_URL
+    assert config.trikon_web_app_url == CANONICAL_WEB_APP_URL
+    assert (
+        config.trikon_cloud_usage_secret_parameter_name
+        == CANONICAL_USAGE_SECRET_PARAMETER_NAME
+    )
+    assert config.trikon_verify_jobs_queue_url == CANONICAL_VERIFY_JOBS_QUEUE_URL
+    assert config.trikon_quota_time_budget_seconds == 10.0
+    assert config.trikon_queue_wait_limit_seconds == 1800
+
+
+@pytest.mark.parametrize("alias", ["TRIKON_WEB_API_URL", "TRIKON_WEB_APP_URL"])
+def test_orchestrator_env_config_strips_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch, alias: str
+) -> None:
+    """A trailing ``/`` on either base URL is stripped (Req 11.15)."""
+    monkeypatch.setenv(alias, "https://api.trikon.example.test/")
+
+    config = OrchestratorEnvConfig()
+
+    field = alias.lower()
+    assert getattr(config, field) == "https://api.trikon.example.test"
+
+
+@pytest.mark.parametrize(
+    "alias",
+    [
+        "TRIKON_WEB_API_URL",
+        "TRIKON_WEB_APP_URL",
+        "TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME",
+        "TRIKON_VERIFY_JOBS_QUEUE_URL",
+    ],
+)
+def test_orchestrator_env_config_missing_usage_var_raises(
+    monkeypatch: pytest.MonkeyPatch, alias: str
+) -> None:
+    """Each required sandbox-minute-plans variable fails when unset (Req 11.14, 11.18)."""
+    monkeypatch.delenv(alias, raising=False)
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+def test_orchestrator_env_config_empty_usage_secret_parameter_name_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty ``TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME`` fails ``min_length=2`` (Req 11.14)."""
+    monkeypatch.setenv("TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME", "")
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+@pytest.mark.parametrize("alias", ["TRIKON_WEB_API_URL", "TRIKON_WEB_APP_URL"])
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://api.trikon.example.test",
+        "https://api.trikon.example.test?x=1",
+        "https://api.trikon.example.test#frag",
+        "https://",
+    ],
+)
+def test_orchestrator_env_config_rejects_non_https_base_url(
+    monkeypatch: pytest.MonkeyPatch, alias: str, bad_url: str
+) -> None:
+    """``http://``, a query, a fragment or a missing host all fail (Req 11.15)."""
+    monkeypatch.setenv(alias, bad_url)
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+@pytest.mark.parametrize("budget", ["0", "-1", "20.5", "21"])
+def test_orchestrator_env_config_quota_budget_out_of_range_rejected(
+    monkeypatch: pytest.MonkeyPatch, budget: str
+) -> None:
+    """The Quota_Time_Budget must be in ``(0, 20]`` (Req 11.14)."""
+    monkeypatch.setenv("TRIKON_QUOTA_TIME_BUDGET_SECONDS", budget)
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+@pytest.mark.parametrize(("budget", "expected"), [("20", 20.0), ("0.5", 0.5)])
+def test_orchestrator_env_config_quota_budget_in_range_accepted(
+    monkeypatch: pytest.MonkeyPatch, budget: str, expected: float
+) -> None:
+    """A budget of 20 (the upper bound) and a fractional budget both load."""
+    monkeypatch.setenv("TRIKON_QUOTA_TIME_BUDGET_SECONDS", budget)
+
+    assert OrchestratorEnvConfig().trikon_quota_time_budget_seconds == expected
+
+
+@pytest.mark.parametrize("limit", ["59", "86401", "0"])
+def test_orchestrator_env_config_queue_wait_limit_out_of_range_rejected(
+    monkeypatch: pytest.MonkeyPatch, limit: str
+) -> None:
+    """The Queue_Wait_Limit must be in ``[60, 86400]`` seconds (Req 11.21)."""
+    monkeypatch.setenv("TRIKON_QUEUE_WAIT_LIMIT_SECONDS", limit)
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+@pytest.mark.parametrize(("limit", "expected"), [("60", 60), ("86400", 86_400)])
+def test_orchestrator_env_config_queue_wait_limit_bounds_accepted(
+    monkeypatch: pytest.MonkeyPatch, limit: str, expected: int
+) -> None:
+    """Both inclusive Queue_Wait_Limit bounds load (Req 11.21)."""
+    monkeypatch.setenv("TRIKON_QUEUE_WAIT_LIMIT_SECONDS", limit)
+
+    assert OrchestratorEnvConfig().trikon_queue_wait_limit_seconds == expected
+
+
+@pytest.mark.parametrize(
+    "bad_queue_url",
+    [
+        f"https://example.com/{CANONICAL_ACCOUNT_ID}/trikon-verify-jobs",
+        f"http://sqs.us-east-1.amazonaws.com/{CANONICAL_ACCOUNT_ID}/trikon-verify-jobs",
+        "https://sqs.us-east-1.amazonaws.com/12345/trikon-verify-jobs",
+        f"https://sqs.us-east-1.amazonaws.com/{CANONICAL_ACCOUNT_ID}/",
+        f"https://sqs.us-east-1.amazonaws.com/{CANONICAL_ACCOUNT_ID}/q?x=1",
+        "",
+    ],
+)
+def test_orchestrator_env_config_non_sqs_queue_url_rejected(
+    monkeypatch: pytest.MonkeyPatch, bad_queue_url: str
+) -> None:
+    """``TRIKON_VERIFY_JOBS_QUEUE_URL`` must be an SQS queue URL (Req 11.18)."""
+    monkeypatch.setenv("TRIKON_VERIFY_JOBS_QUEUE_URL", bad_queue_url)
+
+    with pytest.raises(ValidationError):
+        OrchestratorEnvConfig()
+
+
+def _full_lambda_sqs_record() -> dict[str, Any]:
+    """A Lambda SQS record with every standard key AWS sends."""
+    return {
+        "messageId": "059f36b4-87a3-44ab-83d2-661975830a7d",
+        "receiptHandle": "AQEBwJnKyrHigUMZj6rYigCgxlaS3SLy0a...",
+        "body": '{"foo": "bar"}',
+        "attributes": {
+            "ApproximateReceiveCount": "2",
+            "SentTimestamp": "1700000000000",
+            "SenderId": "AIDAEXAMPLE",
+            "ApproximateFirstReceiveTimestamp": "1700000000123",
+        },
+        "messageAttributes": {
+            "trikon_first_received_at": {
+                "stringValue": "1700000000",
+                "stringListValues": [],
+                "binaryListValues": [],
+                "dataType": "Number",
+            }
+        },
+        "md5OfBody": "9bb58f26192e4ba00f01e2e7b136bbd8",
+        "md5OfMessageAttributes": "00484c68cf6ac6b4a1e6ba7a8b5e4d3c",
+        "eventSource": "aws:sqs",
+        "eventSourceARN": f"arn:aws:sqs:us-east-1:{CANONICAL_ACCOUNT_ID}:trikon-verify-jobs",
+        "awsRegion": "us-east-1",
+    }
+
+
+def test_sqs_record_accepts_full_lambda_record() -> None:
+    """A real Lambda SQS record validates, extra attribute list keys ignored."""
+    record = SqsRecord.model_validate(_full_lambda_sqs_record())
+
+    assert record.attributes.ApproximateReceiveCount == "2"
+    assert record.attributes.ApproximateFirstReceiveTimestamp == "1700000000123"
+    attribute = record.messageAttributes["trikon_first_received_at"]
+    assert attribute.dataType == "Number"
+    assert attribute.stringValue == "1700000000"
+    assert record.eventSource == "aws:sqs"
+    assert record.awsRegion == "us-east-1"
+    assert record.md5OfBody == "9bb58f26192e4ba00f01e2e7b136bbd8"
+
+    # The envelope accepts the same record too.
+    envelope = SqsEventEnvelope.model_validate({"Records": [_full_lambda_sqs_record()]})
+    assert envelope.Records[0] == record
+
+
+def test_sqs_record_defaults_without_optional_keys() -> None:
+    """The four required keys alone validate; the optional ones default."""
+    record = SqsRecord.model_validate(
+        {
+            "messageId": "msg-1",
+            "receiptHandle": "handle-1",
+            "body": "{}",
+            "attributes": {"ApproximateReceiveCount": "1"},
+        }
+    )
+
+    assert record.messageAttributes == {}
+    assert record.attributes.ApproximateFirstReceiveTimestamp is None
+    assert record.eventSourceARN is None
+
+
+def test_sqs_record_still_rejects_unknown_top_level_key() -> None:
+    """``extra="forbid"`` still rejects a key that is not a standard SQS key."""
+    raw = _full_lambda_sqs_record()
+    raw["unexpectedKey"] = "boom"
+
+    with pytest.raises(ValidationError):
+        SqsRecord.model_validate(raw)

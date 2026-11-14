@@ -9,8 +9,9 @@ Covers:
   (``installation_id``, ``repo_full_name``, ``pr_number``,
   ``delivery_id``, ``event_type``) onto every subsequent log record —
   Requirement 9.2, design.md §10.4 Property 12.
-* :data:`LOGGING_DENYLIST` contains the ten expected payload / credential
-  field names — Requirement 9.3, design.md §7.4.
+* :data:`LOGGING_DENYLIST` contains the fourteen expected payload /
+  credential / Usage_API field names — Requirement 9.3, design.md §7.4,
+  sandbox-minute-plans Req 11.17, 15.1.
 * Static grep-scan guard: no call site under
   ``trikon_cloud/orchestrator/`` uses a denylist name as a
   logger-call keyword argument — catches accidental
@@ -43,9 +44,10 @@ from trikon_cloud.orchestrator.logger import (
 )
 from trikon_cloud.orchestrator.tests.conftest import make_sqs_job_message
 
-# The ten field names Requirement 9.3 forbids as structured log keys.
+# The fourteen field names Requirement 9.3 (and sandbox-minute-plans
+# Req 11.17, 15.1) forbid as structured log keys.
 # Held here as a plain frozenset so the equality assertion in
-# :func:`test_logging_denylist_contains_ten_expected_keys` fails loudly
+# :func:`test_logging_denylist_contains_fourteen_expected_keys` fails loudly
 # if either side drifts — the test is a two-way contract between this
 # file and :mod:`trikon_cloud.orchestrator.logger`.
 _EXPECTED_DENYLIST: frozenset[str] = frozenset(
@@ -60,6 +62,10 @@ _EXPECTED_DENYLIST: frozenset[str] = frozenset(
         "installation_token",
         "app_jwt",
         "aws_credentials",
+        "usage_secret",
+        "usage_signature",
+        "request_body",
+        "response_body",
     }
 )
 
@@ -136,17 +142,18 @@ def test_append_job_context_propagates_five_natural_keys(
     assert record["event_type"] == message.event_type
 
 
-def test_logging_denylist_contains_ten_expected_keys() -> None:
-    """:data:`LOGGING_DENYLIST` names all ten forbidden log-key strings.
+def test_logging_denylist_contains_fourteen_expected_keys() -> None:
+    """:data:`LOGGING_DENYLIST` names all fourteen forbidden log-key strings.
 
     Requirement 9.3 enumerates the ten payload / credential names that
-    must never appear as structured log keys. The exact-set-equality
+    must never appear as structured log keys; sandbox-minute-plans
+    Req 11.17 / 15.1 add the four Usage_API names. The exact-set-equality
     assertion here (rather than a subset check) fails loudly if either
     a key is dropped from the denylist or a new one is added without
     updating this contract test.
     """
     assert LOGGING_DENYLIST == _EXPECTED_DENYLIST
-    assert len(LOGGING_DENYLIST) == 10
+    assert len(LOGGING_DENYLIST) == 14
 
 
 def test_no_orchestrator_log_site_uses_denylisted_kwarg() -> None:
@@ -154,9 +161,9 @@ def test_no_orchestrator_log_site_uses_denylisted_kwarg() -> None:
 
     Design.md §7.4 makes the denylist a *convention* rather than a
     Powertools filter — this test is the enforcement mechanism.
-    Walks the three modules that actually emit log records
-    (``handler.py``, ``ecs_dispatcher.py``, ``never_fail_open.py``)
-    and asserts no log-call keyword-argument name matches a denylist
+    Walks the four modules that actually emit log records
+    (``handler.py``, ``ecs_dispatcher.py``, ``never_fail_open.py``,
+    ``busy_requeue.py``) and asserts no log-call keyword-argument name matches a denylist
     entry. Catches accidental ``logger.error("...", body=raw_body)``
     regressions at test time (Requirement 9.3).
     """
@@ -170,6 +177,7 @@ def test_no_orchestrator_log_site_uses_denylisted_kwarg() -> None:
         source_root / "handler.py",
         source_root / "ecs_dispatcher.py",
         source_root / "never_fail_open.py",
+        source_root / "busy_requeue.py",
     )
     offenders: list[str] = []
     for path in targets:

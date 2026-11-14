@@ -27,7 +27,7 @@ The routing default for unknown event types is fail-closed: ``204``
 rather than ``202``.
 
 Module-level state below (``_env_config``, ``_webhook_secret``,
-``_sqs_writer``, ``_installation_events_writer``, ``_secrets_client``)
+``_sqs_writer``, ``_installation_events_writer``, ``_ssm_client``)
 is lazy-initialised on the first warm invocation and reused across
 subsequent invocations to keep the cold-start budget minimal. The design.md §3.1 rationale for module-level
 caching applies: the Lambda's cold-start-including-init lands under
@@ -45,6 +45,7 @@ reaches CloudWatch.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Literal, Protocol, cast
 
@@ -71,19 +72,20 @@ from trikon_cloud.webhook_receiver.sqs_writer import SqsWriteError, SqsWriter
 __all__ = ["handler"]
 
 
-class _SecretsManagerClient(Protocol):
-    """Structural type for the subset of the boto3 Secrets Manager client we call.
+class _SsmGetParameterProtocol(Protocol):
+    """Structural type for the subset of the boto3 SSM client we call.
 
     ``boto3`` ships without type stubs; this protocol lets ``mypy
-    --strict`` type-check the single ``get_secret_value`` call site
-    without a runtime dependency on ``boto3-stubs``. We only ever read
-    ``SecretString`` off the response, so a ``dict[str, str]`` return
-    type is faithful for our use of the API (``SecretBinary`` bytes
-    aren't accessed by this receiver).
+    --strict`` type-check the single ``get_parameter`` call site
+    without a runtime dependency on ``boto3-stubs``. The receiver only
+    reads ``response["Parameter"]["Value"]``; a response without either
+    key raises :class:`KeyError`, the same error class the previous
+    reader raised for a value-less response.
     """
 
-    def get_secret_value(self, *, SecretId: str) -> dict[str, str]:  # noqa: N803
-        ...
+    def get_parameter(
+        self, *, Name: str, WithDecryption: bool  # noqa: N803 -- boto3 API contract
+    ) -> Mapping[str, Mapping[str, str]]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ _env_config: ReceiverEnvConfig | None = None
 _webhook_secret: bytes | None = None
 _sqs_writer: SqsWriter | None = None
 _installation_events_writer: SqsWriter | None = None
-_secrets_client: _SecretsManagerClient | None = None
+_ssm_client: _SsmGetParameterProtocol | None = None
 _LOG = logger.get_logger()
 
 
@@ -119,23 +121,32 @@ def _load_env_config() -> ReceiverEnvConfig:
     return _env_config
 
 
-def _load_webhook_secret() -> bytes:
-    """Fetch and cache the webhook secret bytes from AWS Secrets Manager.
+def _get_webhook_secret() -> bytes:
+    """Fetch and cache the webhook secret bytes from SSM Parameter Store.
+
+    Reads the SecureString named by
+    ``ReceiverEnvConfig.webhook_secret_parameter_name`` with
+    ``get_parameter(Name=..., WithDecryption=True)`` and encodes
+    ``Parameter.Value`` as UTF-8.
 
     Raises the underlying :class:`botocore.exceptions.BotoCoreError` /
-    :class:`botocore.exceptions.ClientError` on failure so the handler
-    can map it to the ``500 internal_error`` response body per §7 path
-    5. The bytes are cached across warm invocations; a rotation forces
-    a cold start (which is the current M1 acceptable trade-off — post-M1
-    a scheduled secret-refresh may be added).
+    :class:`botocore.exceptions.ClientError` (for example
+    ``ParameterNotFound``) on failure so the handler can map it to the
+    ``500 internal_error`` response body per §7 path 5. A response
+    without ``Parameter.Value`` raises :class:`KeyError`, as before.
+    Failures are not cached. The bytes are cached across warm
+    invocations; a rotation forces a cold start (the current M1
+    trade-off). The value is never logged.
     """
-    global _webhook_secret, _secrets_client
+    global _webhook_secret, _ssm_client
     if _webhook_secret is None:
         env = _load_env_config()
-        if _secrets_client is None:
-            _secrets_client = cast(_SecretsManagerClient, boto3.client("secretsmanager"))
-        response = _secrets_client.get_secret_value(SecretId=env.webhook_secret_arn)
-        _webhook_secret = response["SecretString"].encode("utf-8")
+        if _ssm_client is None:
+            _ssm_client = cast(_SsmGetParameterProtocol, boto3.client("ssm"))
+        response = _ssm_client.get_parameter(
+            Name=env.webhook_secret_parameter_name, WithDecryption=True
+        )
+        _webhook_secret = response["Parameter"]["Value"].encode("utf-8")
     return _webhook_secret
 
 
@@ -420,11 +431,11 @@ def on_github_webhook() -> Response[str]:
         _LOG.info("ping_received")
         return _json_response(200, {"status": "pong"})
 
-    # §7 path 5: Secrets Manager read failure → 500.
+    # §7 path 5: webhook-secret parameter read failure → 500.
     try:
-        secret = _load_webhook_secret()
+        secret = _get_webhook_secret()
     except (ClientError, BotoCoreError):
-        _LOG.exception("secrets_manager_read_failed")
+        _LOG.exception("webhook_secret_read_failed")
         return _json_response(500, {"error": "internal_error"})
 
     decoded_body = app.current_event.decoded_body

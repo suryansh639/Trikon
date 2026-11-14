@@ -49,8 +49,8 @@ Plus the cross-cutting invariants:
 
 **Setup**
 
-* ``@mock_aws()`` on every test that touches AWS (DynamoDB, SSM,
-  Secrets Manager) — moto intercepts boto3 calls.
+* ``@mock_aws()`` on every test that touches AWS (DynamoDB and SSM,
+  including the App-key ``SecureString``) — moto intercepts boto3 calls.
 * :mod:`respx` intercepts the two GitHub REST endpoints exercised
   on the Terminal path.
 * Module caches on both :mod:`trikon_cloud.orchestrator.handler`
@@ -110,13 +110,23 @@ from trikon_cloud.orchestrator.ecs_dispatcher import (
 from trikon_cloud.orchestrator.handler import lambda_handler
 from trikon_cloud.orchestrator.logger import LOGGING_DENYLIST
 from trikon_cloud.orchestrator.models import RunTaskCall
+from trikon_cloud.usage_client.models import (
+    QuotaAllowed,
+    QuotaDecision,
+    QuotaRequest,
+    UsageDelivered,
+    UsageRejected,
+    UsageReport,
+)
 
 from .conftest import (
+    CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
     CANONICAL_DELIVERY_ID,
     CANONICAL_EVENT_TYPE,
     CANONICAL_INSTALLATION_ID,
     CANONICAL_PR_NUMBER,
     CANONICAL_REPO_FULL_NAME,
+    CANONICAL_USAGE_SECRET_PARAMETER_NAME,
     make_sqs_job_message,
 )
 
@@ -137,6 +147,9 @@ _CANONICAL_TASK_ARN: str = (
 # strictly greater than ``262_144`` bytes. This margin comfortably
 # clears the boundary without becoming unwieldy in the test module.
 _OVERSIZED_PADDING_LENGTH: int = 300_000
+
+# Reservation_Id returned by the allowing Usage_API stub.
+_CANONICAL_RESERVATION_ID: str = "3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b"
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +175,7 @@ def _aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_handler_module_caches(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force cold-start bootstrap on every test by zeroing the four caches.
+    """Force cold-start bootstrap on every test by zeroing the module caches.
 
     :mod:`trikon_cloud.orchestrator.handler` keeps its cold-start
     caches (:data:`_ENV`, :data:`_RESOLVER`, :data:`_BOTO_SESSION`,
@@ -177,6 +190,41 @@ def _reset_handler_module_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(handler_module, "_RESOLVER", None)
     monkeypatch.setattr(handler_module, "_BOTO_SESSION", None)
     monkeypatch.setattr(handler_module, "_GITHUB_CLIENT", None)
+    # The SQS client is built from the (moto-backed) boto3 session like
+    # the SSM / ECS / DynamoDB clients; the Usage_API client is injected
+    # by the autouse :func:`usage_client` fixture below.
+    monkeypatch.setattr(handler_module, "_SQS_CLIENT", None)
+
+
+class _AllowingUsageClient:
+    """Stub Usage_API client: every Quota_Request is ``allowed``.
+
+    Records each Quota_Request and Usage_Report so tests can assert the
+    quota step ran and whether the 0-minute release was sent. The
+    quota-path and busy-path branches are covered in
+    ``test_orchestrator_quota.py`` and ``test_orchestrator_busy.py``.
+    """
+
+    def __init__(self) -> None:
+        self.quota_requests: list[QuotaRequest] = []
+        self.reports: list[UsageReport] = []
+
+    def check_quota(self, request: QuotaRequest, budget_seconds: float) -> QuotaDecision:
+        del budget_seconds
+        self.quota_requests.append(request)
+        return QuotaAllowed(reservation_id=_CANONICAL_RESERVATION_ID)
+
+    def report_usage(self, report: UsageReport) -> UsageDelivered | UsageRejected:
+        self.reports.append(report)
+        return UsageDelivered(outcome="recorded")
+
+
+@pytest.fixture(autouse=True)
+def usage_client(monkeypatch: pytest.MonkeyPatch) -> _AllowingUsageClient:
+    """Inject an allowing Usage_API client into the handler's module cache."""
+    stub = _AllowingUsageClient()
+    monkeypatch.setattr(handler_module, "_USAGE_CLIENT", stub)
+    return stub
 
 
 @pytest.fixture(autouse=True)
@@ -358,21 +406,21 @@ def _create_verdicts_table() -> None:
     )
 
 
-def _create_app_key_secret(pem: bytes) -> str:
-    """Create a Secrets Manager secret carrying the RSA PEM, return its moto ARN.
+def _create_app_key_parameter(pem: bytes) -> str:
+    """Create the moto SSM ``SecureString`` App-key parameter, return its name.
 
-    moto assigns its own randomized ARN suffix on ``create_secret``,
-    so the caller pins the resulting ARN into
-    ``TRIKON_APP_PRIVATE_KEY_SECRET_ARN`` via
-    :meth:`pytest.MonkeyPatch.setenv` BEFORE the handler bootstraps
-    (the sibling ``conftest`` autouse fixture sets a placeholder ARN
-    that moto would otherwise reject).
+    The parameter is created at
+    :data:`CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME`, the value the
+    sibling ``conftest`` autouse fixture puts in
+    ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME``, so the handler's
+    cold-start bootstrap reads it with no env override.
     """
-    resp = boto3.client("secretsmanager", region_name="us-east-1").create_secret(
-        Name="trikon/app-key-test-handler",
-        SecretString=pem.decode("utf-8"),
+    boto3.client("ssm", region_name="us-east-1").put_parameter(
+        Name=CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
+        Value=pem.decode("utf-8"),
+        Type="SecureString",
     )
-    return str(resp["ARN"])
+    return CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +529,7 @@ def _check_run_route(respx_mock: respx.MockRouter) -> respx.Route:
 def test_happy_path_returns_empty_batch_and_dispatches_once(
     log_stream: io.StringIO,
     monkeypatch: pytest.MonkeyPatch,
+    usage_client: _AllowingUsageClient,
 ) -> None:
     """Feature: trikon-cloud-orchestrator, Property 4: RunTaskCall shape invariant.
 
@@ -501,6 +550,15 @@ def test_happy_path_returns_empty_batch_and_dispatches_once(
     assert result == {"batchItemFailures": []}
     # STEP 7 fired exactly once — Requirement 3.1.
     assert len(captured) == 1
+    # STEP 4b asked once, with Run_Id = delivery_id (sandbox-minute-plans
+    # Req 11.1), and the Reservation_Id reached the task (Req 11.3).
+    assert len(usage_client.quota_requests) == 1
+    assert usage_client.quota_requests[0].run_id == CANONICAL_DELIVERY_ID
+    environment = captured[0].overrides.containerOverrides[0].environment
+    assert {"name": "TRIKON_RESERVATION_ID", "value": _CANONICAL_RESERVATION_ID} in [
+        entry.model_dump() for entry in environment
+    ]
+    assert usage_client.reports == []
     records = _log_records(log_stream)
     dispatched = [r for r in records if r.get("message") == "run_task_dispatched"]
     assert len(dispatched) == 1
@@ -728,6 +786,7 @@ def test_step_5_ssm_task_definition_flows_verbatim_to_build_run_task_call(
 def test_step_7_transient_failure_raises_transient_dispatch_error(
     log_stream: io.StringIO,
     monkeypatch: pytest.MonkeyPatch,
+    usage_client: _AllowingUsageClient,
 ) -> None:
     """Feature: trikon-cloud-orchestrator, Property 6: Transient vs Terminal classification.
 
@@ -758,6 +817,8 @@ def test_step_7_transient_failure_raises_transient_dispatch_error(
     # No Terminal-branch log record — the Transient path exits before
     # writing a synthetic verdict.
     assert not [r for r in records if r.get("message") == "run_task_terminal_failure"]
+    # The Reservation stays open: no release (sandbox-minute-plans Req 11.13).
+    assert usage_client.reports == []
 
 
 # ---------------------------------------------------------------------------
@@ -770,6 +831,7 @@ def test_step_7_terminal_failure_writes_verdict_and_posts_check_run(
     log_stream: io.StringIO,
     monkeypatch: pytest.MonkeyPatch,
     rsa_test_private_key_pem: bytes,
+    usage_client: _AllowingUsageClient,
 ) -> None:
     """Feature: trikon-cloud-orchestrator, Property 7: Never-Fail-Open + idempotence.
 
@@ -784,11 +846,9 @@ def test_step_7_terminal_failure_writes_verdict_and_posts_check_run(
     """
     _create_ssm_param()
     _create_verdicts_table()
-    secret_arn = _create_app_key_secret(rsa_test_private_key_pem)
-    # Override the placeholder ARN set by the sibling conftest
-    # ``_env_setup`` fixture with the moto-assigned ARN so
-    # :meth:`get_secret_value` inside the App-JWT mint succeeds.
-    monkeypatch.setenv("TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn)
+    # The SecureString sits at the name ``_env_setup`` exports, so
+    # :meth:`get_parameter` inside the App-JWT mint succeeds.
+    _create_app_key_parameter(rsa_test_private_key_pem)
     _stub_submit_run_task_raise(monkeypatch, error_code="TaskDefinitionNotFound")
 
     body = make_sqs_job_message().model_dump_json()
@@ -821,6 +881,18 @@ def test_step_7_terminal_failure_writes_verdict_and_posts_check_run(
     assert len(errors) == 1
     assert errors[0]["error_class"] == "terminal"
     assert errors[0]["aws_error_code"] == "TaskDefinitionNotFound"
+    # The Reservation was released with one 0-minute report and null
+    # timestamps (sandbox-minute-plans Req 11.12, 12.12).
+    assert usage_client.reports == [
+        UsageReport(
+            run_id=CANONICAL_DELIVERY_ID,
+            reservation_id=_CANONICAL_RESERVATION_ID,
+            billed_minutes=0,
+            started_at=None,
+            stopped_at=None,
+        )
+    ]
+    assert len([r for r in records if r.get("message") == "usage_release_delivered"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1012,17 +1084,23 @@ def test_bootstrap_returns_cached_values_without_reinit_on_warm_start(
     # returns it verbatim without dereferencing any attribute, so
     # ``spec=`` is unnecessary.
     gh_client = MagicMock()
+    usage = MagicMock()
+    sqs = MagicMock()
 
     monkeypatch.setattr(handler_module, "_ENV", env)
     monkeypatch.setattr(handler_module, "_RESOLVER", resolver)
     monkeypatch.setattr(handler_module, "_BOTO_SESSION", session)
     monkeypatch.setattr(handler_module, "_GITHUB_CLIENT", gh_client)
+    monkeypatch.setattr(handler_module, "_USAGE_CLIENT", usage)
+    monkeypatch.setattr(handler_module, "_SQS_CLIENT", sqs)
 
     (
         result_env,
         result_resolver,
         result_session,
         result_gh,
+        result_usage,
+        result_sqs,
     ) = handler_module._bootstrap()
 
     # Identity comparison — the function returned the SAME objects
@@ -1031,6 +1109,64 @@ def test_bootstrap_returns_cached_values_without_reinit_on_warm_start(
     assert result_resolver is resolver
     assert result_session is session
     assert result_gh is gh_client
+    assert result_usage is usage
+    assert result_sqs is sqs
+
+
+def test_bootstrap_cold_start_builds_usage_and_sqs_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold start builds a :class:`UsageApiClient` and an SQS client.
+
+    No AWS or HTTP call is made: the Usage_Secret is read lazily on the
+    first Quota_Request, and building a boto3 client is local.
+    """
+    from trikon_cloud.usage_client.client import UsageApiClient
+
+    monkeypatch.setattr(handler_module, "_USAGE_CLIENT", None)
+    *_, result_usage, result_sqs = handler_module._bootstrap()
+
+    assert isinstance(result_usage, UsageApiClient)
+    assert hasattr(result_sqs, "send_message")
+
+
+def test_bootstrap_cold_start_shares_one_ssm_client_between_both_readers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold start builds exactly one ``ssm`` client and no Secrets Manager client.
+
+    The App-key reader (:class:`OrchestratorGithubClient`) and the
+    Usage_Secret reader (:class:`UsageSecretReader`) receive the same
+    client and the parameter names from the env (cost-cuts Req 5.1, 6.2).
+    Building a boto3 client is local; no AWS call is made.
+    """
+    built: list[str] = []
+    real_session = boto3.session.Session(region_name="us-east-1")
+
+    class _RecordingSession:
+        def client(self, service_name: str) -> Any:
+            built.append(service_name)
+            return real_session.client(service_name)
+
+    monkeypatch.setattr(handler_module, "_BOTO_SESSION", _RecordingSession())
+    monkeypatch.setattr(handler_module, "_GITHUB_CLIENT", None)
+    monkeypatch.setattr(handler_module, "_USAGE_CLIENT", None)
+    monkeypatch.setattr(handler_module, "_SQS_CLIENT", None)
+
+    _, _, _, gh_client, usage_client, _ = handler_module._bootstrap()
+
+    # One SSM client for both readers plus the SQS client; no Secrets
+    # Manager client is built any more.
+    assert sorted(built) == ["sqs", "ssm"]
+    gh_ssm = gh_client._ssm_client
+    reader = usage_client._secret_reader  # type: ignore[attr-defined]
+    assert gh_ssm is reader._ssm_client
+    # botocore names the generated client class after the service.
+    assert type(gh_ssm).__name__ == "SSM"
+    assert gh_client._app_private_key_parameter_name == (
+        CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME
+    )
+    assert reader._parameter_name == CANONICAL_USAGE_SECRET_PARAMETER_NAME
 
 
 # ---------------------------------------------------------------------------

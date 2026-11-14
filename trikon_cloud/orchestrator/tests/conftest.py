@@ -4,7 +4,7 @@ Provides:
 
 * Canonical fixture data constants (installation id, repo full name,
   PR number, head/base SHAs, delivery id, event type, sent-at, AWS
-  account id, App id, and the App private-key Secrets Manager ARN)
+  account id, App id, and the App-key and Usage_Secret SSM parameter names)
   matching design.md §3.3's concrete payload — inline Python per the
   Spec 1/2 rule that fixture data lives as constants in this file,
   NOT as top-level ``.json`` files under ``tests/fixtures/``.
@@ -22,7 +22,7 @@ Provides:
   Included here (in addition to the lifecycle package's conftest) for
   cross-suite consistency in Wave-5 tests that exercise both packages.
 * :func:`_env_setup` — autouse function-scoped fixture that populates
-  the seven :class:`OrchestratorEnvConfig` aliases in the process env
+  the eleven :class:`OrchestratorEnvConfig` aliases in the process env
   so any test that constructs the settings model succeeds without
   boilerplate ``monkeypatch.setenv`` calls.
 * :func:`_powertools_logger_state_clear` — autouse function-scoped
@@ -75,14 +75,20 @@ CANONICAL_EVENT_TYPE: str = "pull_request.opened"
 CANONICAL_SENT_AT: str = "2024-11-14T12:34:56.789+00:00"
 CANONICAL_ACCOUNT_ID: str = "000000000000"
 CANONICAL_APP_ID: int = 999999
-CANONICAL_APP_PRIVATE_KEY_SECRET_ARN: str = (
-    "arn:aws:secretsmanager:us-east-1:000000000000:secret:trikon/app-key-abcdef"
-)
+# SSM SecureString parameter names the Orchestrator reads (cost-cuts Req 5, 6).
+CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME: str = "/trikon/test/github-app-private-key"
+CANONICAL_USAGE_SECRET_PARAMETER_NAME: str = "/trikon/test/cloud-usage-secret"
 # Duplicate of :data:`CANONICAL_APP_ID` under the alias the
 # ``installation_lifecycle`` package uses (``github_app_id`` on the
 # SQS body per design.md §3.2). Kept identically valued so cross-suite
 # tests can treat the two names as interchangeable.
 CANONICAL_GITHUB_APP_ID: int = 999999
+# sandbox-minute-plans Usage_API configuration (Req 11.14, 11.15, 11.18).
+CANONICAL_WEB_API_URL: str = "https://api.trikon.example.test"
+CANONICAL_WEB_APP_URL: str = "https://trikon.example.test"
+CANONICAL_VERIFY_JOBS_QUEUE_URL: str = (
+    f"https://sqs.us-east-1.amazonaws.com/{CANONICAL_ACCOUNT_ID}/trikon-verify-jobs"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +181,7 @@ def make_installation_event_message(
 
 @pytest.fixture(autouse=True)
 def _env_setup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Populate the process env with the seven Orchestrator aliases.
+    """Populate the process env with the eleven Orchestrator aliases.
 
     Any test that constructs an :class:`OrchestratorEnvConfig` (either
     directly or transitively via the handler's cold-start bootstrap)
@@ -197,10 +203,18 @@ def _env_setup(monkeypatch: pytest.MonkeyPatch) -> None:
         f"https://sqs.us-east-1.amazonaws.com/{CANONICAL_ACCOUNT_ID}/trikon-verify-jobs-dlq",
     )
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", CANONICAL_APP_PRIVATE_KEY_SECRET_ARN
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME
     )
     monkeypatch.setenv("TRIKON_APP_ID", str(CANONICAL_APP_ID))
     monkeypatch.setenv("AWS_REGION", "us-east-1")
+    # sandbox-minute-plans Req 11.14, 11.15, 11.18: Usage_API config and the
+    # orchestrator's own source queue.
+    monkeypatch.setenv("TRIKON_WEB_API_URL", CANONICAL_WEB_API_URL)
+    monkeypatch.setenv("TRIKON_WEB_APP_URL", CANONICAL_WEB_APP_URL)
+    monkeypatch.setenv(
+        "TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME", CANONICAL_USAGE_SECRET_PARAMETER_NAME
+    )
+    monkeypatch.setenv("TRIKON_VERIFY_JOBS_QUEUE_URL", CANONICAL_VERIFY_JOBS_QUEUE_URL)
 
 
 @pytest.fixture(autouse=True)

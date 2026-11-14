@@ -28,6 +28,9 @@ Purity contract:
 * No ``boto3``, no ``httpx``, no filesystem reads, no environment reads.
 * No side effects. All inputs are function arguments; the return value is
   a frozen Pydantic model tree.
+* The only project import is :func:`trikon_cloud.secure_params.parameter_arn`,
+  which the CDK side also uses, so both build the App-key Parameter_ARN
+  from the same template (trikon-cloud-cost-cuts design, Grants).
 
 Byte-match contract (see design.md §6.3 and CDK source at
 ``fargate_runner_stack.py:329-370``):
@@ -58,6 +61,8 @@ import json
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+from trikon_cloud.secure_params import parameter_arn
 
 # Ordering pinned by the spec (task 6, tasks.md): the three top-level
 # callables first, then the five model classes in design-order (§6.2).
@@ -159,7 +164,7 @@ class InstallationPolicyDocument(BaseModel):
         0. ``DynamoDBVerdictsScopedToInstallation``
         1. ``DynamoDBPrStateScopedToInstallation``
         2. ``S3EvidenceSpillScopedToInstallation``
-        3. ``SecretsManagerAppPrivateKeyRead``
+        3. ``SsmAppPrivateKeyRead``
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -169,7 +174,7 @@ class InstallationPolicyDocument(BaseModel):
         PolicyStatement,  # 0 — DynamoDBVerdictsScopedToInstallation
         PolicyStatement,  # 1 — DynamoDBPrStateScopedToInstallation
         PolicyStatement,  # 2 — S3EvidenceSpillScopedToInstallation
-        PolicyStatement,  # 3 — SecretsManagerAppPrivateKeyRead
+        PolicyStatement,  # 3 — SsmAppPrivateKeyRead
     ]
 
 
@@ -206,7 +211,7 @@ class AssumeRolePolicyDocument(BaseModel):
 def render_installation_policy_document(
     installation_id: int,
     *,
-    app_private_key_secret_arn: str,
+    app_private_key_parameter_name: str,
     account_id: str,
     region: str,
 ) -> InstallationPolicyDocument:
@@ -222,12 +227,15 @@ def render_installation_policy_document(
             what CDK's ``iam.PolicyStatement`` emits from
             ``[str(installation_id)]`` and
             ``f"arn:aws:s3:::trikon-cloud-evidence/{installation_id}/*"``.
-        app_private_key_secret_arn: The Secrets Manager ARN of the GitHub App
-            private key; placed verbatim into statement 3's ``Resource``.
+        app_private_key_parameter_name: The "/"-rooted name of the SSM
+            SecureString parameter holding the GitHub App private key
+            (App_Key_Parameter). Statement 3's ``Resource`` is its
+            Parameter_ARN, built with
+            :func:`trikon_cloud.secure_params.parameter_arn`.
         account_id: The 12-digit AWS account ID that hosts the two DynamoDB
-            tables; substituted into the ``Resource`` ARNs for statements
-            0 and 1.
-        region: The AWS region for the DynamoDB ``Resource`` ARNs. At M1 this
+            tables and the App_Key_Parameter; substituted into the
+            ``Resource`` ARNs for statements 0, 1 and 3.
+        region: The AWS region for the DynamoDB and SSM ``Resource`` ARNs. At M1 this
             is always ``"us-east-1"`` — plumbing the parameter through
             preserves optionality for a hypothetical M3 multi-region
             deployment (design.md §6.3).
@@ -273,18 +281,24 @@ def render_installation_policy_document(
         Condition=None,
     )
 
-    # 3. Secrets Manager GetSecretValue on the App private key ARN.
-    stmt_secret = PolicyStatement(
-        Sid="SecretsManagerAppPrivateKeyRead",
+    # 3. ssm:GetParameter on exactly the App_Key_Parameter ARN (Req 4.4).
+    # No kms:Decrypt: the AWS-managed aws/ssm key policy already allows
+    # decryption through SSM for principals in the account.
+    stmt_app_key = PolicyStatement(
+        Sid="SsmAppPrivateKeyRead",
         Effect="Allow",
-        Action=("secretsmanager:GetSecretValue",),
-        Resource=app_private_key_secret_arn,
+        Action=("ssm:GetParameter",),
+        Resource=parameter_arn(
+            region=region,
+            account=account_id,
+            name=app_private_key_parameter_name,
+        ),
         Condition=None,
     )
 
     return InstallationPolicyDocument(
         Version="2012-10-17",
-        Statement=(stmt_verdicts, stmt_pr_state, stmt_s3, stmt_secret),
+        Statement=(stmt_verdicts, stmt_pr_state, stmt_s3, stmt_app_key),
     )
 
 
@@ -337,7 +351,7 @@ def canonical_json(doc: InstallationPolicyDocument | AssumeRolePolicyDocument) -
     without a ``"Condition"`` key when no conditions are configured; the
     default Pydantic serialization of ``Condition: PolicyCondition | None =
     None`` would emit ``"Condition":null``, breaking the byte-match on
-    statements 2 (S3) and 3 (Secrets Manager). ``exclude_none=True``
+    statements 2 (S3) and 3 (SSM). ``exclude_none=True``
     suppresses only ``None``-valued fields — every non-optional field in
     the model hierarchy is required, so the flag has no effect elsewhere.
 
