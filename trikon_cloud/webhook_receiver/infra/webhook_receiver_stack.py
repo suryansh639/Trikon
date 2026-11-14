@@ -21,6 +21,10 @@ destroy`` is therefore safe: destroying the stack removes only the
 Lambda, API Gateway, SQS queues and IAM role (the log group is
 retained).
 
+The Lambda code is a prebuilt Lambda_Asset directory (trikon-go-live
+Req 7.4), and the stack outputs the GitHub App webhook URL as
+``WebhookUrl`` (Req 8.1, 8.2).
+
 Deploy commands, prerequisites, and rollback notes live in
 ``README.md`` alongside this module.
 """
@@ -29,7 +33,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_apigatewayv2 as apigw
 from aws_cdk import aws_apigatewayv2_integrations as apigw_int
 from aws_cdk import aws_iam as iam
@@ -42,9 +46,18 @@ from trikon_cloud.secure_params import WEBHOOK_SECRET_PARAMETER_ENV, parameter_a
 
 __all__ = [
     "VERIFY_JOBS_MAX_RECEIVE_COUNT",
+    "WEBHOOK_PATH",
     "WEBHOOK_SECRET_PARAMETER_READ_SID",
+    "WEBHOOK_URL_OUTPUT_ID",
     "WebhookReceiverStack",
 ]
+
+# Path of the single ``POST`` route. The route and the ``WebhookUrl``
+# output share it, so the printed URL always matches the deployed route.
+WEBHOOK_PATH = "/webhooks/github"
+
+# Logical id of the CloudFormation output holding the webhook URL (Req 8.1).
+WEBHOOK_URL_OUTPUT_ID = "WebhookUrl"
 
 # Sid of the inline statement granting ``ssm:GetParameter`` on exactly the
 # Webhook_Secret_Parameter ARN (cost-cuts Req 4.1).
@@ -76,6 +89,10 @@ class WebhookReceiverStack(Stack):
             the queue; it imports it by ARN and grants the Lambda
             role ``sqs:SendMessage`` on it. A missing/empty value
             raises at synth time (fail-loud choice).
+        lambda_asset_dir: Path of a Lambda_Asset directory written by
+            ``python -m trikon_cloud.lambda_asset`` and already checked by
+            :func:`trikon_cloud.lambda_asset.validate_asset_dir`. The
+            function's code is packaged from it as-is.
         dlq_arn: Optional ARN of a pre-existing DLQ to reuse (e.g.,
             when redeploying against an environment that already owns
             the queue). When ``None`` (the default), the stack creates
@@ -86,8 +103,9 @@ class WebhookReceiverStack(Stack):
 
     Public attributes:
         queue_url: URL of the main ``trikon-verify-jobs`` queue.
-        api_endpoint: HTTPS endpoint the release engineer registers as
-            the GitHub App's webhook URL.
+        api_endpoint: HTTPS endpoint of the HTTP API. The GitHub App
+            webhook URL is this endpoint followed by :data:`WEBHOOK_PATH`,
+            emitted as the ``WebhookUrl`` stack output.
         function_arn: ARN of the ``trikon-cloud-webhook-receiver``
             Lambda function.
     """
@@ -103,6 +121,7 @@ class WebhookReceiverStack(Stack):
         *,
         webhook_secret_parameter_name: str,
         installation_events_queue_arn: str,
+        lambda_asset_dir: str,
         dlq_arn: str | None = None,
         **kwargs: Any,
     ) -> None:
@@ -157,27 +176,28 @@ class WebhookReceiverStack(Stack):
             installation_events_queue_arn,
         )
 
-        # (4) Lambda function — Python 3.11 on x86_64, 512 MB, 10-second
+        # (4) Lambda function — Python 3.11 on arm64, 512 MB, 10-second
         # timeout (matches GitHub's webhook timeout — API Gateway hard-
         # limits at 30 s but we want to fail fast so GitHub sees a
         # useful 5xx rather than a timeout).
         #
-        # ``Code.from_asset`` packages the ``trikon_cloud/webhook_receiver``
-        # directory as-is (no Docker bundling). The release engineer
-        # installs the ``cloud`` extra deps into the asset directory
-        # (or uses ``lambda_python_alpha.PythonFunction`` when the
-        # experimental module is available in their venv) before
-        # running ``cdk deploy`` — see ``README.md`` §Deploy.
+        # ``Code.from_asset`` packages the prebuilt Lambda_Asset directory
+        # as-is (no Docker bundling). Build it with
+        # ``python -m trikon_cloud.lambda_asset --out build/lambda-asset``
+        # (see :mod:`trikon_cloud.lambda_asset`): it holds the
+        # ``trikon_cloud`` sources plus the arm64 CPython 3.11 wheels of
+        # ``lambda-requirements.txt``, which is why the function runs on
+        # arm64 (trikon-go-live Req 7.6).
         function = lambda_.Function(
             self,
             "WebhookReceiverFunction",
             function_name="trikon-cloud-webhook-receiver",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="trikon_cloud.webhook_receiver.handler.handler",
-            code=lambda_.Code.from_asset("trikon_cloud/webhook_receiver"),
+            code=lambda_.Code.from_asset(lambda_asset_dir),
             memory_size=512,
             timeout=Duration.seconds(10),
-            architecture=lambda_.Architecture.X86_64,
+            architecture=lambda_.Architecture.ARM_64,
             environment={
                 WEBHOOK_SECRET_PARAMETER_ENV: webhook_secret_parameter_name,
                 "TRIKON_VERIFY_JOBS_QUEUE_URL": queue.queue_url,
@@ -224,17 +244,26 @@ class WebhookReceiverStack(Stack):
             api_name="trikon-cloud-webhook-receiver-api",
         )
 
-        # (7) Route — a single ``POST /webhooks/github`` proxying to
-        # the Lambda via the powertools resolver.
+        # (7) Route — a single ``POST /webhooks/github`` (WEBHOOK_PATH)
+        # proxying to the Lambda via the powertools resolver.
         http_api.add_routes(
-            path="/webhooks/github",
+            path=WEBHOOK_PATH,
             methods=[apigw.HttpMethod.POST],
             integration=apigw_int.HttpLambdaIntegration(
                 "WebhookLambdaIntegration", function
             ),
         )
 
-        # (8) Public attributes for the app entry / release engineer.
+        # (8) Webhook URL output, printed by ``cdk deploy`` so the operator
+        # can paste it into the GitHub App settings (Req 8.1, 8.2).
+        CfnOutput(
+            self,
+            WEBHOOK_URL_OUTPUT_ID,
+            value=f"{http_api.api_endpoint}{WEBHOOK_PATH}",
+            description="GitHub App webhook URL (paste into the Trikon Verify App settings)",
+        )
+
+        # (9) Public attributes for the app entry / release engineer.
         self.queue_url = queue.queue_url
         self.api_endpoint = http_api.api_endpoint
         self.function_arn = function.function_arn

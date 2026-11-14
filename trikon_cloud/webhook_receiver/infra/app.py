@@ -1,8 +1,17 @@
 """CDK app entry for the Trikon Cloud webhook receiver stack.
 
-Invoke via ``cdk synth -c installation_events_queue_arn=<arn>`` or
-``cdk deploy WebhookReceiverStack -c installation_events_queue_arn=<arn>``
-with ``--app "python -m trikon_cloud.webhook_receiver.infra.app"``.
+Invoke via ``cdk synth`` or ``cdk deploy WebhookReceiverStack`` with
+``--app "python -m trikon_cloud.webhook_receiver.infra.app"``,
+``-c installation_events_queue_arn=<arn>`` and
+``-c lambda_asset_dir=build/lambda-asset``.
+
+The Lambda code comes from a Lambda_Asset directory built beforehand with
+``python -m trikon_cloud.lambda_asset --out build/lambda-asset`` (see
+:mod:`trikon_cloud.lambda_asset`). ``-c lambda_asset_dir=<dir>`` names it
+(trikon-go-live Req 7.1). A missing or empty value, a directory without an
+Asset_Manifest, or an asset built from older sources fails synthesis with a
+message starting with ``lambda_asset_dir`` that names the builder command
+(Req 7.2, 7.3).
 
 The webhook secret lives in an SSM SecureString parameter that the
 operator creates out-of-band before the first deploy (cost-cuts Req 3.5).
@@ -28,6 +37,7 @@ from collections.abc import Mapping
 
 import aws_cdk as cdk
 
+from trikon_cloud.lambda_asset import LAMBDA_ASSET_DIR_CONTEXT, validate_asset_dir
 from trikon_cloud.secure_params import (
     WEBHOOK_SECRET_PARAMETER_CONTEXT,
     WEBHOOK_SECRET_PARAMETER_DEFAULT,
@@ -54,7 +64,9 @@ def build_app(
     CLI / ``cdk.json`` context (``CDK_CONTEXT_JSON``) takes precedence, as
     CDK defines. No AWS calls are made. Raises :class:`ValueError` for a
     missing ``installation_events_queue_arn``, an invalid
-    ``webhook_secret_parameter_name`` or the obsolete ``webhook_secret_arn``.
+    ``webhook_secret_parameter_name``, the obsolete ``webhook_secret_arn``,
+    or a ``lambda_asset_dir`` that is missing, is not a Lambda_Asset or is
+    stale (checked by :func:`trikon_cloud.lambda_asset.validate_asset_dir`).
     """
     app = cdk.App(context=dict(context or {}), outdir=outdir)
 
@@ -84,12 +96,17 @@ def build_app(
             "`-c installation_events_queue_arn=<arn>` or in cdk.json context"
         )
 
+    lambda_asset_dir = validate_asset_dir(
+        app.node.try_get_context(LAMBDA_ASSET_DIR_CONTEXT)
+    )
+
     WebhookReceiverStack(
         app,
         STACK_ID,
         env=cdk.Environment(account=account, region=region),
         webhook_secret_parameter_name=webhook_secret_parameter_name,
         installation_events_queue_arn=installation_events_queue_arn,
+        lambda_asset_dir=lambda_asset_dir,
     )
     return app
 

@@ -44,8 +44,9 @@ Build the runner container image locally from the repo root:
 docker build -f trikon_cloud/fargate_runner/Dockerfile -t trikon-cloud-runner:local .
 ```
 
-Manual release-engineer gate. Publishing the image to ECR Public is out of
-scope for the implementation tasks in this spec.
+Manual release-engineer gate. Deployed images are pushed to the private
+ECR repository `trikon-cloud-runner` with an immutable `runner-<git-sha>`
+tag; see [`infra/README.md`](infra/README.md) §5.
 
 ## Deploy
 
@@ -99,8 +100,12 @@ per-installation IAM template:
 ```bash
 uv run cdk deploy FargateRunnerStack \
   -c app_id=<github-app-numeric-id> \
+  -c runner_image_uri=<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha> \
   --app "python -m trikon_cloud.fargate_runner.infra.app"
 ```
+
+`runner_image_uri` is required and names the pushed runner image; the tag
+`latest` is rejected.
 
 Manual release-engineer gate. The CDK app requires AWS credentials with the
 appropriate permissions and is not invoked from CI. See

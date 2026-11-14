@@ -1,8 +1,18 @@
 """CDK app entry for the Trikon Cloud Fargate runner stack.
 
-Invoke via ``cdk synth -c app_id=<id>`` or
-``cdk deploy FargateRunnerStack -c app_id=<id>`` with
-``--app "python -m trikon_cloud.fargate_runner.infra.app"``.
+Invoke via ``cdk synth -c app_id=<id> -c runner_image_uri=<image>`` or
+``cdk deploy FargateRunnerStack -c app_id=<id> -c runner_image_uri=<image>``
+with ``--app "python -m trikon_cloud.fargate_runner.infra.app"``.
+
+``runner_image_uri`` is required (go-live Req 5.1-5.3). It names the runner
+container image as ``<registry>/<repository>:<tag>`` or
+``<registry>/<repository>@sha256:<64 hex>``, normally an immutable
+``runner-<git short sha>`` tag in the private ECR repository
+``trikon-cloud-runner`` that the operator creates and pushes to before the
+deploy (see ``trikon_cloud/DEPLOY.md``). A missing, empty or non-string
+value, a value with whitespace, a malformed reference, or the tag
+``latest`` fails synthesis with a message starting ``runner_image_uri``.
+The value is passed to the task definition unchanged.
 
 The GitHub App private key lives in an SSM SecureString parameter that the
 operator creates out-of-band before the first deploy (Requirement 19.5;
@@ -25,6 +35,7 @@ credentials), so tests can synthesize the stack offline (Req 1.3).
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 
 import aws_cdk as cdk
@@ -36,12 +47,63 @@ from trikon_cloud.secure_params import (
     parameter_name_from_context,
 )
 
-__all__ = ["OBSOLETE_APP_KEY_CONTEXT", "STACK_ID", "build_app", "main"]
+__all__ = [
+    "OBSOLETE_APP_KEY_CONTEXT",
+    "RUNNER_IMAGE_URI_CONTEXT",
+    "STACK_ID",
+    "build_app",
+    "main",
+    "runner_image_uri_from_context",
+]
 
 STACK_ID = "FargateRunnerStack"
 
 # Removed in favour of ``app_private_key_parameter_name`` (Secrets Manager cut).
 OBSOLETE_APP_KEY_CONTEXT = "app_private_key_secret_arn"
+
+# CDK context key naming the runner container image (go-live Req 5.1).
+RUNNER_IMAGE_URI_CONTEXT = "runner_image_uri"
+
+# ``<registry>/<repository>:<tag>`` or ``<registry>/<repository>@sha256:<hex>``.
+# The registry is a lower-case DNS name with an optional port; repository
+# path components follow the OCI distribution grammar; tags follow the
+# Docker tag grammar (at most 128 characters).
+_IMAGE_REF = re.compile(
+    r"^(?P<registry>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]{1,5})?)"
+    r"/(?P<repository>[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*)"
+    r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})|@sha256:(?P<digest>[0-9a-f]{64}))$"
+)
+
+_IMAGE_FORM = "<registry>/<repository>:<tag> or <registry>/<repository>@sha256:<64 hex>"
+
+
+def runner_image_uri_from_context(raw: object) -> str:
+    """Return ``raw`` unchanged when it is a valid Runner_Image_URI (Req 5.2, 5.3).
+
+    Raises ValueError whose message starts with ``runner_image_uri`` when the
+    value is absent, not a string, empty, contains whitespace, does not match
+    ``<registry>/<repository>:<tag>`` or ``…@sha256:<64 hex>``, or uses the
+    tag ``latest``.
+    """
+    key = RUNNER_IMAGE_URI_CONTEXT
+    if raw is None:
+        raise ValueError(
+            f"{key} must be provided via `-c {key}=<image>` ({_IMAGE_FORM})"
+        )
+    if not isinstance(raw, str):
+        raise ValueError(f"{key} must be a string; got {type(raw).__name__}")
+    if not raw:
+        raise ValueError(f"{key} must not be empty ({_IMAGE_FORM})")
+    if any(ch.isspace() for ch in raw):
+        raise ValueError(f"{key} must not contain whitespace: {raw!r}")
+    match = _IMAGE_REF.fullmatch(raw)
+    if match is None:
+        raise ValueError(f"{key} must have the form {_IMAGE_FORM}; got {raw!r}")
+    if match.group("tag") == "latest":
+        raise ValueError(
+            f"{key} must name a specific image, not the tag `latest`: {raw!r}"
+        )
+    return raw
 
 
 def build_app(
@@ -52,9 +114,10 @@ def build_app(
     ``context`` is passed to :class:`aws_cdk.App` as additional context;
     CLI / ``cdk.json`` context (``CDK_CONTEXT_JSON``) takes precedence, as
     CDK defines. No AWS calls are made. Raises :class:`ValueError` for a
-    missing ``app_id``, an invalid ``app_private_key_parameter_name`` or the
-    obsolete ``app_private_key_secret_arn`` — the CDK CLI surfaces the
-    message and exits non-zero.
+    missing ``app_id``, an invalid ``app_private_key_parameter_name``, the
+    obsolete ``app_private_key_secret_arn``, or a missing or invalid
+    ``runner_image_uri`` — the CDK CLI surfaces the message and exits
+    non-zero.
     """
     app = cdk.App(context=dict(context or {}), outdir=outdir)
 
@@ -84,12 +147,17 @@ def build_app(
         )
     app_id = int(app_id_ctx)
 
+    runner_image_uri = runner_image_uri_from_context(
+        app.node.try_get_context(RUNNER_IMAGE_URI_CONTEXT)
+    )
+
     FargateRunnerStack(
         app,
         STACK_ID,
         env=cdk.Environment(account=account, region=region),
         app_private_key_parameter_name=app_private_key_parameter_name,
         app_id=app_id,
+        runner_image_uri=runner_image_uri,
     )
     return app
 

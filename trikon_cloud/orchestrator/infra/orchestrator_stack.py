@@ -181,6 +181,11 @@ class OrchestratorStack(Stack):
             ``TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME`` to the orchestrator
             and the Usage_Reporter; both roles get ``ssm:GetParameter`` on
             exactly its Parameter_ARN (Req 11.16; cost-cuts Req 4.2, 4.3).
+        lambda_asset_dir: Path of a Lambda_Asset directory written by
+            ``python -m trikon_cloud.lambda_asset`` and already checked by
+            :func:`trikon_cloud.lambda_asset.validate_asset_dir`. Every
+            Lambda's code is packaged from it as-is (trikon-go-live
+            Req 7.4).
         use_fargate_spot: Spot_Flag (cost-cuts Req 8.2). Set on the
             orchestrator as ``TRIKON_USE_FARGATE_SPOT`` (``"true"`` or
             ``"false"``); when on, Attempt 1 runs on ``FARGATE_SPOT``.
@@ -234,6 +239,7 @@ class OrchestratorStack(Stack):
         trikon_web_api_url: str,
         trikon_web_app_url: str,
         usage_secret_parameter_name: str,
+        lambda_asset_dir: str,
         verify_runner_active_revision_ssm_param: str = "/trikon/verify-runner/active-revision",
         use_fargate_spot: bool = True,
         **kwargs: Any,
@@ -315,18 +321,16 @@ class OrchestratorStack(Stack):
         )
 
         # -------------------------------------------------------------
-        # 5. Shared deployment asset. Both Lambdas ship the same
-        # ``trikon_cloud/`` package zip; ``Code.from_asset`` bundles
-        # the folder as-is, matching the pattern in
+        # 5. Shared deployment asset. Every Lambda in this stack ships the
+        # same prebuilt Lambda_Asset directory, packaged as-is by
+        # ``Code.from_asset`` (no Docker bundling), matching
         # :mod:`trikon_cloud.webhook_receiver.infra.webhook_receiver_stack`.
-        # The release engineer installs the ``cloud`` extra deps into
-        # the asset directory before ``cdk deploy`` — see README.md
-        # §Deploy (task 15). Docker-based bundling via
-        # ``aws_lambda_python_alpha.PythonFunction`` is out of scope
-        # for this task (the alpha module is not currently in the
-        # ``dev`` extra).
+        # Build it with ``python -m trikon_cloud.lambda_asset --out
+        # build/lambda-asset`` (see :mod:`trikon_cloud.lambda_asset`): it
+        # holds the ``trikon_cloud`` sources plus the arm64 CPython 3.11
+        # wheels of ``lambda-requirements.txt``.
         # -------------------------------------------------------------
-        lambda_code = _lambda.Code.from_asset("trikon_cloud")
+        lambda_code = _lambda.Code.from_asset(lambda_asset_dir)
 
         # -------------------------------------------------------------
         # 6. Parameter_ARNs of the two SSM SecureString parameters. The

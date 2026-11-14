@@ -92,6 +92,10 @@ _TEST_REGION: str = "us-east-1"
 # irrelevant to the per-installation IAM policy under test (that method
 # never reads ``app_id``); a fixed placeholder is fine.
 _UNUSED_APP_ID: int = 999999
+# Likewise the runner image: required by the stack, irrelevant to the policy.
+_UNUSED_RUNNER_IMAGE_URI: str = (
+    "000000000000.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-test"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +129,7 @@ def _canonical_from_cdk(installation_id: int, app_key_parameter_name: str) -> st
         "TestStack",
         app_private_key_parameter_name=app_key_parameter_name,
         app_id=_UNUSED_APP_ID,
+        runner_image_uri=_UNUSED_RUNNER_IMAGE_URI,
         env=Environment(account=_TEST_ACCOUNT_ID, region=_TEST_REGION),
     )
     stack.build_task_role_for_installation(

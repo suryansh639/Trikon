@@ -1,0 +1,10 @@
+# Third-party packages for the Trikon Cloud Lambda functions.
+# Built for CPython 3.11 on manylinux2014_aarch64 by trikon_cloud.lambda_asset.
+# Every range must stay inside the `cloud` extra in pyproject.toml.
+aws-lambda-powertools>=3,<4
+pydantic>=2.9,<3
+pydantic-settings>=2,<3
+httpx>=0.27,<0.29
+PyJWT[crypto]>=2.9,<3
+boto3>=1.35,<2
+botocore>=1.35,<2

@@ -48,6 +48,7 @@ import aws_cdk as cdk
 import pytest
 
 from trikon_cloud.fargate_runner.infra import app as fargate_runner_app
+from trikon_cloud.lambda_asset import LAMBDA_ASSET_DIR_CONTEXT
 from trikon_cloud.orchestrator.infra import app as orchestrator_app
 from trikon_cloud.secure_params import (
     APP_KEY_PARAMETER_DEFAULT,
@@ -61,15 +62,18 @@ Template = Mapping[str, Any]
 _ACCOUNT = "123456789012"
 _REGION = "us-east-1"
 
-# ``Code.from_asset(...)`` paths are cwd-relative, so synthesis runs here.
+# Synthesis runs from the ``Trikon/`` root, as the CDK CLI does.
 _TRIKON_ROOT: Path = Path(__file__).resolve().parents[2]
 _TRIKON_CLOUD_ROOT: Path = _TRIKON_ROOT / "trikon_cloud"
 
 # Test context per CDK_App. Parameter names are left at their defaults, so
-# the Secure_Parameter names below are the ones the stacks reference.
+# the Secure_Parameter names below are the ones the stacks reference. The
+# two Lambda apps also need ``lambda_asset_dir``; their module fixtures add
+# the session Lambda_Asset (see ``_with_asset``).
 FARGATE_RUNNER_CONTEXT: Mapping[str, object] = {
     "account": _ACCOUNT,
     "app_id": "999999",
+    "runner_image_uri": f"{_ACCOUNT}.dkr.ecr.{_REGION}.amazonaws.com/trikon-cloud-runner:runner-test",
 }
 ORCHESTRATOR_CONTEXT: Mapping[str, object] = {
     "app_id": 999999,
@@ -190,23 +194,32 @@ def fargate_runner_synth(tmp_path_factory: pytest.TempPathFactory) -> Synthesize
     )
 
 
+def _with_asset(context: Mapping[str, object], lambda_asset_dir: str) -> dict[str, object]:
+    """``context`` plus ``lambda_asset_dir``, required by both Lambda apps."""
+    return {**context, LAMBDA_ASSET_DIR_CONTEXT: lambda_asset_dir}
+
+
 @pytest.fixture(scope="module")
-def orchestrator_synth(tmp_path_factory: pytest.TempPathFactory) -> Synthesized:
+def orchestrator_synth(
+    tmp_path_factory: pytest.TempPathFactory, lambda_asset_dir: str
+) -> Synthesized:
+    context = _with_asset(ORCHESTRATOR_CONTEXT, lambda_asset_dir)
     return _synth(
         "orchestrator",
-        lambda outdir: orchestrator_app.build_app(ORCHESTRATOR_CONTEXT, outdir=outdir),
+        lambda outdir: orchestrator_app.build_app(context, outdir=outdir),
         orchestrator_app.STACK_ID,
         tmp_path_factory.mktemp("cost-guard-orchestrator"),
     )
 
 
 @pytest.fixture(scope="module")
-def webhook_receiver_synth(tmp_path_factory: pytest.TempPathFactory) -> Synthesized:
+def webhook_receiver_synth(
+    tmp_path_factory: pytest.TempPathFactory, lambda_asset_dir: str
+) -> Synthesized:
+    context = _with_asset(WEBHOOK_RECEIVER_CONTEXT, lambda_asset_dir)
     return _synth(
         "webhook_receiver",
-        lambda outdir: webhook_receiver_app.build_app(
-            WEBHOOK_RECEIVER_CONTEXT, outdir=outdir
-        ),
+        lambda outdir: webhook_receiver_app.build_app(context, outdir=outdir),
         webhook_receiver_app.STACK_ID,
         tmp_path_factory.mktemp("cost-guard-webhook-receiver"),
     )

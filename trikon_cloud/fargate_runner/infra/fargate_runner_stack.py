@@ -65,6 +65,11 @@ class FargateRunnerStack(Stack):
     release engineer puts the SecureString value out-of-band before
     deploy.
 
+    Does NOT create the runner image repository either (go-live design
+    D1). The operator creates the private ECR repository
+    ``trikon-cloud-runner`` and pushes an immutable tag before deploying;
+    the stack only names the image through ``runner_image_uri``.
+
     Args:
         scope: Parent construct (typically ``cdk.App``).
         id: Stack logical id (typically ``"FargateRunnerStack"``).
@@ -74,8 +79,11 @@ class FargateRunnerStack(Stack):
             ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME``.
         app_id: GitHub App numeric ID (baked into the task-definition
             env as ``TRIKON_APP_ID``).
-        ecr_public_repo_name: ECR Public repository name for the
-            runner image. Defaults to ``"trikon-cloud-runner"``.
+        runner_image_uri: Runner container image reference, already
+            validated by
+            :func:`trikon_cloud.fargate_runner.infra.app.runner_image_uri_from_context`
+            when built through the CDK app. Used unchanged as the
+            container image (go-live Req 5.4).
         kwargs: Forwarded to :class:`aws_cdk.Stack`.
 
     Public attributes:
@@ -102,7 +110,7 @@ class FargateRunnerStack(Stack):
         *,
         app_private_key_parameter_name: str,
         app_id: int,
-        ecr_public_repo_name: str = "trikon-cloud-runner",
+        runner_image_uri: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -211,7 +219,7 @@ class FargateRunnerStack(Stack):
         # references the cluster by name. 2-AZ VPC with public subnets
         # only and zero NAT gateways (sandbox-minute-plans Req 14.1,
         # 14.2): runner tasks get a public IP (``assignPublicIp=
-        # ENABLED``) and reach ECR Public / package indexes through the
+        # ENABLED``) and reach ECR / package indexes through the
         # internet gateway, so no NAT hourly or per-GB charge accrues.
         # Changing the subnet layout replaces the VPC's subnets on
         # deploy; deploy when no runner task is running.
@@ -314,18 +322,20 @@ class FargateRunnerStack(Stack):
         )
 
         # -------------------------------------------------------------
-        # 7. Container in the task definition. Image path points at
-        # ECR Public; the release engineer publishes the image tag
-        # ``0.3.6-runner-mvp`` out-of-band before Spec 3 can run tasks.
-        # Environment values are the CDK-configurable half of the memo
-        # §5.4 env-var contract; Spec 3 supplies the RunTask-time half
-        # via the ``overrides.containerOverrides.environment`` list.
+        # 7. Container in the task definition. The image is
+        # ``runner_image_uri`` unchanged: normally an immutable
+        # ``runner-<git short sha>`` tag in the private ECR repository
+        # ``trikon-cloud-runner``, which the operator creates and pushes
+        # to before deploying (trikon_cloud/DEPLOY.md). The execution
+        # role's AmazonECSTaskExecutionRolePolicy (§5) already allows
+        # pulls from same-account private ECR, so no extra grant is
+        # added. Environment values are the CDK-configurable half of the
+        # memo §5.4 env-var contract; Spec 3 supplies the RunTask-time
+        # half via the ``overrides.containerOverrides.environment`` list.
         # -------------------------------------------------------------
         task_def.add_container(
             id="runner",
-            image=ecs.ContainerImage.from_registry(
-                f"public.ecr.aws/trikon/{ecr_public_repo_name}:0.3.6-runner-mvp"
-            ),
+            image=ecs.ContainerImage.from_registry(runner_image_uri),
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="runner",
                 log_group=log_group,

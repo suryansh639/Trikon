@@ -1,5 +1,11 @@
 # `FargateRunnerStack` — deploy runbook
 
+> **Production go-live.** For the production go-live sequence (SSM
+> parameters, ECR repository and runner image, Lambda asset, the three
+> deploys and the GitHub App webhook), follow
+> [`../../DEPLOY.md`](../../DEPLOY.md). This file is the per-stack
+> reference for `FargateRunnerStack`.
+
 CDK Python stack for the Trikon Cloud Fargate verify-runner (Spec 2 of the
 M1 milestone). Provisions the ECS cluster (with the `FARGATE` and
 `FARGATE_SPOT` capacity providers), the task definition, three DynamoDB
@@ -48,9 +54,12 @@ When hosted PR checks are wanted:
   container as `TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME`, and the
   per-installation task roles get `ssm:GetParameter` on exactly that
   parameter's ARN (Requirement 19.5).
-- The runner Docker image must be published to ECR Public at
-  `public.ecr.aws/trikon/trikon-cloud-runner:0.3.6-runner-mvp` before
-  the first `cdk deploy` — see §5.
+- The runner Docker image must be pushed to the private ECR repository
+  `trikon-cloud-runner` in the deploy account before the first
+  `cdk deploy` (§5). **This stack does NOT create the repository.** Every
+  synth and deploy names the image with `-c runner_image_uri=<image>`,
+  for example
+  `<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha>`.
 
 ## 3. Secure parameters (create before the first deploy)
 
@@ -126,42 +135,80 @@ template is valid:
 ```
 uv run cdk synth \
   -c app_id=<github-app-numeric-id> \
+  -c runner_image_uri=<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha> \
   --app "python -m trikon_cloud.fargate_runner.infra.app"
 ```
 
-`app_id` is required; synthesis fails without it. Add
+`app_id` and `runner_image_uri` are required; synthesis fails without
+them. `runner_image_uri` must have the form
+`<registry>/<repository>:<tag>` or `<registry>/<repository>@sha256:<64 hex>`,
+with no whitespace and not the tag `latest`; otherwise synthesis fails
+with a message starting `runner_image_uri`. Synth does not check that the
+image exists, so any well-formed value works offline. The task definition
+uses the value unchanged. Add
 `-c app_private_key_parameter_name=<name>` only when you use a custom name
 (§3). The emitted template lands at
 `cdk.out/FargateRunnerStack.template.json`.
 
 ## 5. Build + push the runner image (manual gate)
 
-Build the container locally from the repo root:
+The image lives in a private ECR repository, `trikon-cloud-runner`, in
+the same account and region as the stack. Create the repository once
+(release-engineer action; the stack does not create it). Tags are
+immutable, so each pushed tag always names the same image:
 
 ```
-docker build -f trikon_cloud/fargate_runner/Dockerfile -t trikon-cloud-runner:local .
+aws ecr create-repository --region us-east-1 \
+  --repository-name trikon-cloud-runner \
+  --image-tag-mutability IMMUTABLE \
+  --image-scanning-configuration scanOnPush=true
 ```
 
-Push to ECR Public (release-engineer action; requires `docker login` to
-`public.ecr.aws`):
+[`../../DEPLOY.md`](../../DEPLOY.md) also adds a lifecycle policy that
+keeps the last 5 images.
+
+Build the container from the repo root and tag it `runner-<git-sha>`,
+where `<git-sha>` is the output of `git rev-parse --short HEAD`. The task
+definition sets no runtime platform, so Fargate runs it on X86_64; build
+for `linux/amd64`:
 
 ```
-aws ecr-public get-login-password --region us-east-1 | \
-  docker login --username AWS --password-stdin public.ecr.aws
-
-docker tag trikon-cloud-runner:local \
-  public.ecr.aws/trikon/trikon-cloud-runner:0.3.6-runner-mvp
-
-docker push public.ecr.aws/trikon/trikon-cloud-runner:0.3.6-runner-mvp
+docker build --platform linux/amd64 \
+  -f trikon_cloud/fargate_runner/Dockerfile \
+  -t <account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha> .
 ```
+
+Push it (release-engineer action):
+
+```
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
+
+docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha>
+```
+
+Pass the pushed image to every synth, deploy and destroy as
+`-c runner_image_uri=<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha>`.
+The tag `latest` is rejected. Because tags are immutable, pushing a
+changed image needs a new tag, normally from a new commit. The task
+execution role has the AWS-managed `AmazonECSTaskExecutionRolePolicy`,
+which allows pulls from private ECR in the same account, so no extra
+grant is needed.
 
 ## 6. Deploy the stack (manual gate)
+
+Push the image (§5) first; the task definition names it, and the first
+runner task fails to start if the image is missing.
 
 ```
 uv run cdk deploy FargateRunnerStack \
   -c app_id=<github-app-numeric-id> \
+  -c runner_image_uri=<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha> \
   --app "python -m trikon_cloud.fargate_runner.infra.app"
 ```
+
+To roll out new runner code, push a new `runner-<git-sha>` tag and
+redeploy with that `runner_image_uri`.
 
 The deploy creates the shared ECS cluster (`trikon-verify-cluster`), the
 task definition family (`trikon-verify-runner`), the three DynamoDB tables
@@ -206,12 +253,18 @@ What the stack sets for cost:
 ```
 uv run cdk destroy FargateRunnerStack \
   -c app_id=<github-app-numeric-id> \
+  -c runner_image_uri=<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha> \
   --app "python -m trikon_cloud.fargate_runner.infra.app"
 ```
+
+`cdk destroy` synthesizes the app first, so it needs the same required
+context as the deploy. Pass the deployed `runner_image_uri`.
 
 `cdk destroy` is safe because:
 - The stack does NOT own the App private key parameter (referenced by
   name, not created). The three SSM parameters in §3 survive.
+- The stack does NOT own the `trikon-cloud-runner` ECR repository
+  (created in §5). The repository and its images survive.
 - The three DynamoDB tables have `RemovalPolicy.RETAIN` — data survives.
 - The S3 evidence bucket has `RemovalPolicy.RETAIN` — spilled evidence
   survives.
@@ -243,8 +296,10 @@ delete (or back up and delete) the three tables and the
 
 ## 10. Deploy Ordering
 
-For a from-scratch deploy, create the parameters in §3 first, then deploy
-the three stacks in this order. Each step takes values from the one before:
+For a from-scratch deploy, create the parameters in §3 and push the
+runner image (§5) first. Then build the Lambda asset that the webhook
+receiver and orchestrator stacks package, and deploy the three stacks in
+this order. Each step takes values from the one before:
 
 1. **`FargateRunnerStack`** (this stack) creates the tables, the cluster,
    the VPC and the active-revision parameter, and outputs
@@ -260,12 +315,16 @@ the three stacks in this order. Each step takes values from the one before:
    to.
 
 ```
+uv run python -m trikon_cloud.lambda_asset --out build/lambda-asset
+
 uv run cdk deploy FargateRunnerStack \
   -c app_id=<github-app-numeric-id> \
+  -c runner_image_uri=<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha> \
   --app "python -m trikon_cloud.fargate_runner.infra.app"
 
 uv run cdk deploy WebhookReceiverStack \
   -c installation_events_queue_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-cloud-installation-events \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.webhook_receiver.infra.app"
 
 uv run cdk deploy TrikonCloudOrchestratorStack \
@@ -276,11 +335,14 @@ uv run cdk deploy TrikonCloudOrchestratorStack \
   -c runner_security_group_ids=<RunnerSecurityGroupId-output> \
   -c trikon_web_api_url=<trikon-web-api-url> \
   -c trikon_web_app_url=<trikon-web-app-url> \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.orchestrator.infra.app"
 ```
 
-Add the §3 name overrides to each command if you use custom names. See the
-webhook receiver and orchestrator runbooks for their other options.
+Run all four commands from the repo root; `build/lambda-asset` is
+relative to it. Add the §3 name overrides to each command if you use
+custom names. See the webhook receiver and orchestrator runbooks for the
+Lambda asset and their other options.
 
 `FargateRunnerStack` MUST be deployed before `TrikonCloudOrchestratorStack`.
 On the first cold start after deploy, the orchestrator Lambda calls

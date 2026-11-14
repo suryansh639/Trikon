@@ -1,5 +1,11 @@
 # `OrchestratorStack` — deploy runbook
 
+> **Production go-live.** For the production go-live sequence (SSM
+> parameters, ECR repository and runner image, Lambda asset, the three
+> deploys and the GitHub App webhook), follow
+> [`../../DEPLOY.md`](../../DEPLOY.md). This file is the per-stack
+> reference for `TrikonCloudOrchestratorStack`.
+
 CDK Python stack for the Trikon Cloud orchestrator (Spec 3 of the M1
 milestone). Provisions four Python 3.11 arm64 Lambda functions
 (`trikon-cloud-orchestrator`, `trikon-cloud-installation-lifecycle`,
@@ -67,6 +73,8 @@ suite synthesizes all three.
   `runner_subnet_ids`, and its `RunnerSecurityGroupId` output feeds
   `runner_security_group_ids`. Runner tasks run in public subnets with a
   public IP and no NAT gateway.
+- A Lambda asset built from the current sources (§2). Every synth, deploy
+  and destroy names it with `-c lambda_asset_dir=build/lambda-asset`.
 
 ### 1.1 Deploy order
 
@@ -132,9 +140,9 @@ aws ssm put-parameter --region us-east-1 --name /trikon-cloud/usage-secret \
 
 ### 1.3 CDK context values
 
-Every deploy of `TrikonCloudOrchestratorStack` requires seven context
-values, passed via `-c key=value` on the `cdk` command line. A missing
-or empty value fails synthesis:
+Every synth and deploy of `TrikonCloudOrchestratorStack` requires eight
+context values, passed via `-c key=value` on the `cdk` command line. A
+missing or empty value fails synthesis:
 
 | Context key                  | Purpose                                                                                   |
 |------------------------------|-------------------------------------------------------------------------------------------|
@@ -145,6 +153,7 @@ or empty value fails synthesis:
 | `runner_security_group_ids`  | Comma-separated security group IDs from the `RunnerSecurityGroupId` output.               |
 | `trikon_web_api_url`         | Base URL of the Trikon_Web API (Quota and Usage endpoints).                               |
 | `trikon_web_app_url`         | Base URL of the Trikon_Web app (Connect and Upgrade links in fail-closed Check Runs).     |
+| `lambda_asset_dir`           | Lambda asset directory written by the Lambda asset builder (§2), e.g. `build/lambda-asset`. Synthesis also fails if the directory has no `trikon-lambda-asset.json` or was built from older sources. |
 
 Optional context values:
 
@@ -164,10 +173,30 @@ The obsolete context keys `app_private_key_secret_arn` and
 with a message naming the replacement `*_parameter_name` key, so a stale
 deploy command cannot silently fall back to the default names.
 
-## 2. Synth
+## 2. Build the Lambda asset, then synth
 
-Offline — makes no AWS API calls, exits 0 if the emitted CloudFormation
-template is valid. The values below are dummies for synthesis only:
+All four Lambdas are packaged from one prebuilt Lambda asset directory,
+named by the required `lambda_asset_dir` context key. Build it from the
+repo root with the Lambda asset builder:
+
+```
+uv run python -m trikon_cloud.lambda_asset --out build/lambda-asset
+```
+
+The builder copies the `trikon_cloud` package sources into
+`build/lambda-asset/trikon_cloud/`, installs the packages listed in
+`trikon_cloud/lambda-requirements.txt` as CPython 3.11
+`manylinux2014_aarch64` (arm64) wheels, and writes the manifest
+`trikon-lambda-asset.json` last. It needs no Docker daemon and makes no
+AWS call. The same asset serves `WebhookReceiverStack`. Rebuild it after
+any change under `trikon_cloud/`: synthesis fails with a message starting
+`lambda_asset_dir` when the value is missing, names a directory without
+the manifest, or names an asset built from older sources.
+
+Synth is offline — it makes no AWS API calls and exits 0 if the emitted
+CloudFormation template is valid. Run it from the repo root, because
+`build/lambda-asset` is relative to the current directory. The other
+values below are dummies for synthesis only:
 
 ```
 uv run cdk synth \
@@ -178,6 +207,7 @@ uv run cdk synth \
   -c runner_security_group_ids=sg-verify \
   -c trikon_web_api_url=https://api.example.invalid \
   -c trikon_web_app_url=https://app.example.invalid \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.orchestrator.infra.app"
 ```
 
@@ -192,8 +222,8 @@ for that test.
 
 Manual release-engineer gate; **NOT** part of the implementation tasks
 in this spec. Deploy only after §1.1 steps 1 and 2 and after the
-Secure_Parameters in §1.2 exist. Substitute the real values for the
-placeholders:
+Secure_Parameters in §1.2 exist, with a Lambda asset built from the
+current sources (§2). Substitute the real values for the placeholders:
 
 ```
 uv run cdk deploy TrikonCloudOrchestratorStack \
@@ -204,6 +234,7 @@ uv run cdk deploy TrikonCloudOrchestratorStack \
   -c runner_security_group_ids=<RunnerSecurityGroupId-output> \
   -c trikon_web_api_url=<trikon-web-api-url> \
   -c trikon_web_app_url=<trikon-web-app-url> \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.orchestrator.infra.app"
 ```
 
@@ -354,8 +385,19 @@ are referenced here only by ARN.
 
 ```
 uv run cdk destroy TrikonCloudOrchestratorStack \
+  -c app_id=<github-app-id> \
+  -c verify_jobs_queue_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-verify-jobs \
+  -c verify_jobs_dlq_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-verify-jobs-dlq \
+  -c runner_subnet_ids=<RunnerSubnetIds-output> \
+  -c runner_security_group_ids=<RunnerSecurityGroupId-output> \
+  -c trikon_web_api_url=<trikon-web-api-url> \
+  -c trikon_web_app_url=<trikon-web-app-url> \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.orchestrator.infra.app"
 ```
+
+`cdk destroy` synthesizes the app first, so it needs the same eight
+context values as the deploy (§1.3) and a current Lambda asset (§2).
 
 `cdk destroy` is largely safe because this stack does **not** own:
 - The `trikon-verify-jobs` queue or its DLQ (owned by Spec 1).
@@ -403,10 +445,12 @@ drift in either direction fails the test and blocks the merge.
 
 ## 9. Deviations flagged for the release engineer
 
-- The stack packages the Lambdas via `Code.from_asset(...)` on the
-  repo root; the release engineer must vendor the `cloud`-extra deps
-  into the asset before deploy (same pattern as Spec 1 — see that
-  runbook's §2 note).
+- The stack packages all four Lambdas with `Code.from_asset(...)` on the
+  prebuilt Lambda asset named by `lambda_asset_dir` (§2), the same asset
+  `WebhookReceiverStack` uses. The Lambda asset builder supplies the
+  third-party packages, so a deploy needs no Docker daemon. Build the
+  asset before every synth, deploy or destroy that follows a source
+  change.
 - Grant 6 in design.md §8.2 (the Never-Fail-Open `dynamodb:PutItem`
   on `trikon_verdicts`) uses a `ForAllValues:StringLike` LeadingKeys
   wildcard because the orchestrator role is a fleet role, not a

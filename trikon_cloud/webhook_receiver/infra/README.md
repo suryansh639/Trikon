@@ -1,7 +1,13 @@
 # `WebhookReceiverStack` — deploy runbook
 
+> **Production go-live.** For the production go-live sequence (SSM
+> parameters, ECR repository and runner image, Lambda asset, the three
+> deploys and the GitHub App webhook), follow
+> [`../../DEPLOY.md`](../../DEPLOY.md). This file is the per-stack
+> reference for `WebhookReceiverStack`.
+
 CDK Python stack for the Trikon Cloud webhook receiver (Spec 1 of the M1
-milestone). Provisions a single Lambda function fronted by an API Gateway
+milestone). Provisions a single Python 3.11 arm64 Lambda function fronted by an API Gateway
 HTTP API, with the `trikon-verify-jobs` SQS queue + DLQ, a dedicated
 CloudWatch log group (`/aws/lambda/trikon-cloud-webhook-receiver`, 7-day
 retention), and a minimum-viable IAM role.
@@ -31,6 +37,8 @@ working offline in the meantime.
   deploy (the webhook secret is the value set in the App's settings).
 - The three SSM SecureString parameters below must exist in the target
   region (us-east-1) before the first deploy of any stack.
+- A Lambda asset built from the current sources (§2). Every synth, deploy
+  and destroy names it with `-c lambda_asset_dir=build/lambda-asset`.
 
 ### Deploy order
 
@@ -92,14 +100,34 @@ The obsolete `webhook_secret_arn` context key is no longer accepted.
 Passing it fails synthesis, so a stale deploy command cannot silently
 fall back to the default parameter name.
 
-## 2. Synth
+## 2. Build the Lambda asset, then synth
 
-Offline — makes no AWS API calls, exits 0 if the emitted CloudFormation
-template is valid:
+The stack packages the Lambda code from a prebuilt Lambda asset directory
+named by the required `lambda_asset_dir` context key. Build the asset from
+the repo root with the Lambda asset builder:
+
+```
+uv run python -m trikon_cloud.lambda_asset --out build/lambda-asset
+```
+
+The builder copies the `trikon_cloud` package sources into
+`build/lambda-asset/trikon_cloud/`, installs the packages listed in
+`trikon_cloud/lambda-requirements.txt` as CPython 3.11
+`manylinux2014_aarch64` (arm64) wheels, and writes the manifest
+`trikon-lambda-asset.json` last. It needs no Docker daemon and makes no
+AWS call. The same asset serves `TrikonCloudOrchestratorStack`. Rebuild it
+after any change under `trikon_cloud/`: synthesis fails with a message
+starting `lambda_asset_dir` when the value is missing, names a directory
+without the manifest, or names an asset built from older sources.
+
+Synth is offline — it makes no AWS API calls and exits 0 if the emitted
+CloudFormation template is valid. Run it from the repo root, because
+`build/lambda-asset` is relative to the current directory:
 
 ```
 uv run cdk synth \
   -c installation_events_queue_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-cloud-installation-events \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.webhook_receiver.infra.app"
 ```
 
@@ -108,26 +136,16 @@ parameter does not use the default name.
 
 The emitted template lands under `cdk.out/WebhookReceiverStack.template.json`.
 
-> **Note on the Lambda code asset.** The stack packages the
-> `trikon_cloud/webhook_receiver/` directory via `Code.from_asset(...)`
-> **without Docker bundling**. Before running `cdk deploy`, the release
-> engineer must vendor the receiver's runtime deps into the asset
-> directory — either (a) `pip install --target trikon_cloud/webhook_receiver
-> -r <requirements-cloud.txt>` before deploy, (b) rewrite the stack to
-> use `lambda_python_alpha.PythonFunction` when the experimental
-> module is available in the venv, or (c) provide a Docker daemon and
-> switch to `Code.from_asset(..., bundling=BundlingOptions(...))`.
-> Option (b) is preferred for post-M1 hardening; option (a) is the
-> quickest for a one-off manual deploy.
-
 ## 3. Deploy
 
 Manual release-engineer gate; **NOT** part of the implementation tasks in
-this spec. Deploy `FargateRunnerStack` first (see "Deploy order"):
+this spec. Deploy `FargateRunnerStack` first (see "Deploy order") and
+build the Lambda asset (§2):
 
 ```
 uv run cdk deploy WebhookReceiverStack \
   -c installation_events_queue_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-cloud-installation-events \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.webhook_receiver.infra.app"
 ```
 
@@ -140,10 +158,13 @@ and `...:trikon-verify-jobs-dlq`).
 
 Run these checks after all three stacks are deployed.
 
-- The stack emits `api_endpoint` (the HTTPS URL for API Gateway) as a
-  public attribute. Copy it from the `cdk deploy` output.
-- Register that URL as the GitHub App's **Webhook URL** on the
-  marketplace listing.
+- `cdk deploy` prints the stack output `WebhookUrl`: the HTTP API
+  endpoint followed by `/webhooks/github`, which is the full GitHub App
+  webhook URL. Copy it from the `cdk deploy` output, or read it later
+  with
+  `aws cloudformation describe-stacks --region us-east-1 --stack-name WebhookReceiverStack --query "Stacks[0].Outputs[?OutputKey=='WebhookUrl'].OutputValue" --output text`.
+- Register that URL unchanged as the **Webhook URL** in the GitHub App
+  settings.
 - Trigger a GitHub `ping` webhook from the App settings page. The
   receiver should respond `200` with body `{"status": "pong"}`.
 - Send an `X-GitHub-Event: pull_request` `opened` webhook (from a test
@@ -154,8 +175,13 @@ Run these checks after all three stacks are deployed.
 
 ```
 uv run cdk destroy WebhookReceiverStack \
+  -c installation_events_queue_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-cloud-installation-events \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.webhook_receiver.infra.app"
 ```
+
+`cdk destroy` synthesizes the app first, so it needs the same required
+context as the deploy and a current Lambda asset (§2).
 
 `cdk destroy` is safe because the stack does **not** own the webhook
 secret parameter (referenced by name, not created) and does **not** own
@@ -170,11 +196,10 @@ after a `cdk destroy`; otherwise the deploy fails on the name collision.
 
 ## 6. Deviations flagged for the release engineer
 
-- The stack uses `lambda_.Function` with an un-bundled asset because the
-  `lambda_python_alpha.PythonFunction` module was not available in the
-  implementation-time venv and Docker was not available for
-  `BundlingOptions`. Before deploy, resolve the vendoring story (see
-  §2 note above).
+- The stack uses `lambda_.Function` with the prebuilt Lambda asset (§2)
+  instead of `lambda_python_alpha.PythonFunction` or CDK Docker bundling,
+  so a deploy needs no Docker daemon. Build the asset before every
+  synth, deploy or destroy that follows a source change.
 - No custom domain at MVP — the auto-generated `execute-api` URL is
   registered on the GitHub App directly. Adding a custom domain is a
   post-M1 spec.

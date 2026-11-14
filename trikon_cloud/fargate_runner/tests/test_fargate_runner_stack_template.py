@@ -19,6 +19,10 @@
 * Spot readiness (trikon-cloud-cost-cuts Req 8.1, 10.1): the 120-second
   runner ``StopTimeout``, the cluster's ``FARGATE`` / ``FARGATE_SPOT``
   association, and no ``FARGATE_SPOT`` in the default strategy.
+* Runner image (trikon-go-live Req 5.1-5.5): ``build_app`` requires
+  ``runner_image_uri``, passes a valid value unchanged to the container
+  ``Image``, and the execution role keeps
+  ``AmazonECSTaskExecutionRolePolicy`` for private ECR pulls.
 
 No AWS credentials, no network, no ``moto``. The ``build_app`` tests run
 under the shared ``no_network`` fixture.
@@ -48,6 +52,16 @@ _APP_KEY_PARAMETER_ARN: str = (
 _UNUSED_APP_ID: int = 999999
 _RUNNER_SG_NAME: str = "trikon-verify-runner-sg"
 _TASK_ROLE_INSTALLATION_ID: int = 12345678
+_RUNNER_IMAGE_URI: str = (
+    "000000000000.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-test"
+)
+_EXECUTION_ROLE_POLICY: str = "service-role/AmazonECSTaskExecutionRolePolicy"
+
+# Minimal valid ``build_app`` context; tests add or remove keys from it.
+_BUILD_APP_CONTEXT: Mapping[str, object] = {
+    "app_id": "999999",
+    "runner_image_uri": _RUNNER_IMAGE_URI,
+}
 
 
 def _make_stack(app: App) -> FargateRunnerStack:
@@ -56,6 +70,7 @@ def _make_stack(app: App) -> FargateRunnerStack:
         "TestFargateRunnerStack",
         app_private_key_parameter_name=_APP_KEY_PARAMETER_NAME,
         app_id=_UNUSED_APP_ID,
+        runner_image_uri=_RUNNER_IMAGE_URI,
         env=Environment(account=_TEST_ACCOUNT, region=_TEST_REGION),
     )
 
@@ -77,15 +92,37 @@ def template_with_task_role() -> Template:
     return Template.from_stack(stack)
 
 
-def _runner_environment(template: Template) -> dict[str, str]:
-    """Return the runner container's ``Environment`` as a name → value dict."""
+def _task_definition(template: Template) -> Mapping[str, Any]:
+    """Return the single runner ``AWS::ECS::TaskDefinition`` resource."""
     task_defs: Mapping[str, Mapping[str, Any]] = template.find_resources(
         "AWS::ECS::TaskDefinition"
     )
     assert len(task_defs) == 1
     (task_def,) = task_defs.values()
-    (container,) = task_def["Properties"]["ContainerDefinitions"]
+    return task_def
+
+
+def _runner_container(template: Template) -> Mapping[str, Any]:
+    """Return the runner container definition."""
+    (container,) = _task_definition(template)["Properties"]["ContainerDefinitions"]
+    assert isinstance(container, Mapping)
+    return container
+
+
+def _runner_environment(template: Template) -> dict[str, str]:
+    """Return the runner container's ``Environment`` as a name → value dict."""
+    container = _runner_container(template)
     return {entry["Name"]: entry["Value"] for entry in container["Environment"]}
+
+
+def _render_arn(value: object) -> str:
+    """Flatten a literal or ``Fn::Join`` ARN to text, keeping only literal parts."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping) and "Fn::Join" in value:
+        separator, parts = value["Fn::Join"]
+        return str(separator).join(part for part in parts if isinstance(part, str))
+    return json.dumps(value)
 
 
 def _app_template(app: App) -> Template:
@@ -308,12 +345,31 @@ class TestSpotReadiness:
         assert "FARGATE_SPOT" not in json.dumps(default)
 
 
+class TestExecutionRole:
+    """Go-live Req 5.5: the execution role can pull from same-account private ECR."""
+
+    def test_execution_role_has_ecs_task_execution_managed_policy(
+        self, template: Template
+    ) -> None:
+        execution_role_arn = _task_definition(template)["Properties"]["ExecutionRoleArn"]
+        logical_id, attribute = execution_role_arn["Fn::GetAtt"]
+        assert attribute == "Arn"
+        roles: Mapping[str, Mapping[str, Any]] = template.find_resources("AWS::IAM::Role")
+        managed = [
+            _render_arn(arn)
+            for arn in roles[logical_id]["Properties"].get("ManagedPolicyArns", [])
+        ]
+        assert any(
+            arn.endswith(f":iam::aws:policy/{_EXECUTION_ROLE_POLICY}") for arn in managed
+        ), f"execution role lacks {_EXECUTION_ROLE_POLICY}; got {managed!r}"
+
+
 @pytest.mark.usefixtures("no_network")
 class TestBuildApp:
-    """Cost-cuts Req 1.3, 3.1-3.3: ``build_app`` synthesizes offline from context."""
+    """Cost-cuts Req 1.3, 3.1-3.3; go-live Req 5.1-5.4, 5.6: offline synth from context."""
 
     def test_default_parameter_name(self, tmp_path: Path) -> None:
-        app = build_app({"app_id": "999999"}, outdir=str(tmp_path))
+        app = build_app(_BUILD_APP_CONTEXT, outdir=str(tmp_path))
         app.synth()
         env = _runner_environment(_app_template(app))
         assert env["TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME"] == _APP_KEY_PARAMETER_NAME
@@ -321,7 +377,7 @@ class TestBuildApp:
 
     def test_custom_parameter_name(self, tmp_path: Path) -> None:
         app = build_app(
-            {"app_id": "999999", "app_private_key_parameter_name": "/acme/app-key"},
+            {**_BUILD_APP_CONTEXT, "app_private_key_parameter_name": "/acme/app-key"},
             outdir=str(tmp_path),
         )
         env = _runner_environment(_app_template(app))
@@ -333,7 +389,7 @@ class TestBuildApp:
     ) -> None:
         with pytest.raises(ValueError, match=r"^app_private_key_parameter_name"):
             build_app(
-                {"app_id": "999999", "app_private_key_parameter_name": bad_name},
+                {**_BUILD_APP_CONTEXT, "app_private_key_parameter_name": bad_name},
                 outdir=str(tmp_path),
             )
 
@@ -342,11 +398,34 @@ class TestBuildApp:
     ) -> None:
         with pytest.raises(ValueError, match="app_private_key_parameter_name") as exc:
             build_app(
-                {"app_id": "999999", "app_private_key_secret_arn": "arn:aws:example"},
+                {**_BUILD_APP_CONTEXT, "app_private_key_secret_arn": "arn:aws:example"},
                 outdir=str(tmp_path),
             )
         assert str(exc.value).startswith("app_private_key_secret_arn")
 
     def test_missing_app_id_fails(self, tmp_path: Path) -> None:
+        context = {k: v for k, v in _BUILD_APP_CONTEXT.items() if k != "app_id"}
         with pytest.raises(ValueError, match="app_id"):
-            build_app({}, outdir=str(tmp_path))
+            build_app(context, outdir=str(tmp_path))
+
+    def test_missing_runner_image_uri_fails(self, tmp_path: Path) -> None:
+        context = {k: v for k, v in _BUILD_APP_CONTEXT.items() if k != "runner_image_uri"}
+        with pytest.raises(ValueError, match=r"^runner_image_uri"):
+            build_app(context, outdir=str(tmp_path))
+
+    @pytest.mark.parametrize(
+        "image_uri",
+        [
+            _RUNNER_IMAGE_URI,
+            "123456789012.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner@sha256:"
+            + "0123456789abcdef" * 4,
+            "localhost:5000/team/trikon-cloud-runner:runner-0a1b2c3d4e5f",
+        ],
+    )
+    def test_valid_runner_image_uri_is_the_container_image(
+        self, tmp_path: Path, image_uri: str
+    ) -> None:
+        app = build_app(
+            {**_BUILD_APP_CONTEXT, "runner_image_uri": image_uri}, outdir=str(tmp_path)
+        )
+        assert _runner_container(_app_template(app))["Image"] == image_uri

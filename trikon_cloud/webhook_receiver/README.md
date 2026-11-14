@@ -43,9 +43,14 @@ The obsolete `webhook_secret_arn` context key fails synthesis.
 
 Deploy Trikon Cloud only once hosted PR checks are wanted. The deploy order is `FargateRunnerStack`, then `WebhookReceiverStack`, then `TrikonCloudOrchestratorStack`.
 
+Build the Lambda asset from the repo root first, then deploy from the repo root:
+
 ```bash
+uv run python -m trikon_cloud.lambda_asset --out build/lambda-asset
+
 cdk deploy WebhookReceiverStack \
   -c installation_events_queue_arn=arn:aws:sqs:us-east-1:<account-id>:trikon-cloud-installation-events \
+  -c lambda_asset_dir=build/lambda-asset \
   --app "python -m trikon_cloud.webhook_receiver.infra.app"
 ```
 

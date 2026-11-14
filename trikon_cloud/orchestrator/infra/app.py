@@ -14,7 +14,16 @@ DynamoDB table, IAM roles, event-source mappings) are provisioned by
         -c runner_subnet_ids=subnet-a,subnet-b \\
         -c runner_security_group_ids=sg-verify \\
         -c trikon_web_api_url=https://api.trikon.unideploy.com \\
-        -c trikon_web_app_url=https://trikon.unideploy.com
+        -c trikon_web_app_url=https://trikon.unideploy.com \\
+        -c lambda_asset_dir=build/lambda-asset
+
+Every Lambda's code comes from one Lambda_Asset directory built beforehand
+with ``python -m trikon_cloud.lambda_asset --out build/lambda-asset`` (see
+:mod:`trikon_cloud.lambda_asset`). ``-c lambda_asset_dir=<dir>`` names it
+(trikon-go-live Req 7.1). A missing or empty value, a directory without an
+Asset_Manifest, or an asset built from older sources fails synthesis with a
+message starting with ``lambda_asset_dir`` that names the builder command
+(Req 7.2, 7.3).
 
 The stack references pre-existing resources — the ``trikon-verify-jobs``
 queue + its DLQ (by ARN, owned by Spec 1) and the two SSM SecureString
@@ -53,6 +62,7 @@ from collections.abc import Mapping
 
 import aws_cdk as cdk
 
+from trikon_cloud.lambda_asset import LAMBDA_ASSET_DIR_CONTEXT, validate_asset_dir
 from trikon_cloud.orchestrator.infra.orchestrator_stack import OrchestratorStack
 from trikon_cloud.secure_params import (
     APP_KEY_PARAMETER_CONTEXT,
@@ -245,9 +255,10 @@ def build_app(
     CDK defines. No AWS calls are made. Reads every deploy parameter from
     context, validates each is present and well-typed, then instantiates
     the stack pinned to ``us-east-1``. Any missing or malformed context
-    (including an invalid parameter name or an obsolete ``*_secret_arn``
-    key) raises :class:`ValueError` — the CDK CLI prints the message and
-    exits non-zero, which is the intended fail-loud behavior.
+    (including an invalid parameter name, an obsolete ``*_secret_arn``
+    key, or a ``lambda_asset_dir`` that is missing, is not a Lambda_Asset
+    or is stale) raises :class:`ValueError` — the CDK CLI prints the message
+    and exits non-zero, which is the intended fail-loud behavior.
     """
     app = cdk.App(context=dict(context or {}), outdir=outdir)
 
@@ -280,6 +291,9 @@ def build_app(
     use_fargate_spot = _optional_bool_context(
         app, USE_FARGATE_SPOT_CONTEXT, default=True
     )
+    lambda_asset_dir = validate_asset_dir(
+        app.node.try_get_context(LAMBDA_ASSET_DIR_CONTEXT)
+    )
 
     OrchestratorStack(
         app,
@@ -296,6 +310,7 @@ def build_app(
         usage_secret_parameter_name=usage_secret_parameter_name,
         verify_runner_active_revision_ssm_param=verify_runner_active_revision_ssm_param,
         use_fargate_spot=use_fargate_spot,
+        lambda_asset_dir=lambda_asset_dir,
     )
     return app
 

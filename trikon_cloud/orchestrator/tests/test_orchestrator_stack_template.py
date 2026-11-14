@@ -32,8 +32,11 @@ Covers sandbox-minute-plans design.md §11 (Req 11.14, 11.16, 11.18, 11.19,
 * no secret-store resource or action and no created SSM parameter;
 * the ``trikon-verify-runner-task-stopped`` EventBridge rule's pattern and
   target retry / DLQ settings;
-* CDK context validation: parameter-name defaults, invalid names and the
-  obsolete ``*_secret_arn`` keys;
+* CDK context validation: parameter-name defaults, invalid names, the
+  obsolete ``*_secret_arn`` keys and a missing ``lambda_asset_dir``
+  (trikon-go-live Req 7.2). Every synth passes the session
+  ``lambda_asset_dir`` fixture, and every function's code is that one
+  shared asset (trikon-go-live Req 7.4);
 * Fargate Spot (cost-cuts Req 2.5, 4.7, 8.2, 9.1, 9.7): the orchestrator's
   Spot env and ``OrchestratorPrStateRead``, the ``trikon-cloud-spot-retry``
   Lambda, its exact role statements, DLQ, log group and claim table, the
@@ -55,6 +58,7 @@ from aws_cdk.assertions import Template
 from pydantic_settings import BaseSettings
 
 from trikon_cloud.installation_lifecycle.models import LifecycleEnvConfig
+from trikon_cloud.lambda_asset import BUILDER_COMMAND, LAMBDA_ASSET_DIR_CONTEXT
 from trikon_cloud.orchestrator.infra.app import (
     OBSOLETE_APP_KEY_CONTEXT,
     OBSOLETE_USAGE_SECRET_CONTEXT,
@@ -128,11 +132,12 @@ _RULE_NAME: str = "trikon-verify-runner-task-stopped"
 _OLD_STORE: str = "secrets" + "manager"
 _OLD_ENV_SUFFIX: str = "_SECRET" + "_ARN"
 
-# The repo root (``Trikon/``): ``Code.from_asset("trikon_cloud")`` resolves
-# relative to the cwd, so synthesis must run from here.
+# The repo root (``Trikon/``): synthesis runs from here, as the CDK CLI does.
 _TRIKON_ROOT: Path = Path(__file__).resolve().parents[3]
 
-# Required context plus explicit (non-default) parameter names.
+# Required context plus explicit (non-default) parameter names. Neither
+# mapping holds ``lambda_asset_dir``; the ``required_context`` and
+# ``base_context`` fixtures add the session Lambda_Asset.
 _REQUIRED_CONTEXT: Mapping[str, object] = {
     "app_id": CANONICAL_APP_ID,
     "verify_jobs_queue_arn": _VERIFY_JOBS_ARN,
@@ -164,6 +169,18 @@ def synth_env(no_network: None, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture
+def required_context(lambda_asset_dir: str) -> Mapping[str, object]:
+    """``_REQUIRED_CONTEXT`` plus the session Lambda_Asset."""
+    return {**_REQUIRED_CONTEXT, LAMBDA_ASSET_DIR_CONTEXT: lambda_asset_dir}
+
+
+@pytest.fixture
+def base_context(lambda_asset_dir: str) -> Mapping[str, object]:
+    """``_BASE_CONTEXT`` plus the session Lambda_Asset."""
+    return {**_BASE_CONTEXT, LAMBDA_ASSET_DIR_CONTEXT: lambda_asset_dir}
+
+
 def _synth(context: Mapping[str, object], outdir: Path) -> Template:
     """Run ``build_app(context, outdir=...).synth()`` and load the stack template."""
     assembly = build_app(context, outdir=str(outdir)).synth()
@@ -181,16 +198,17 @@ def _synth_cache() -> dict[str, Template]:
 def template(
     synth_env: None,
     _synth_cache: dict[str, Template],
+    base_context: Mapping[str, object],
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Template:
-    """The ``_BASE_CONTEXT`` template, synthesized once per module under ``no_network``.
+    """The ``base_context`` template, synthesized once per module under ``no_network``.
 
     ``no_network`` is function-scoped, so the cache lives in a module-scoped
     fixture and the first test to ask synthesizes inside its own guard.
     """
     if "base" not in _synth_cache:
         _synth_cache["base"] = _synth(
-            _BASE_CONTEXT, tmp_path_factory.mktemp("orchestrator-synth")
+            base_context, tmp_path_factory.mktemp("orchestrator-synth")
         )
     return _synth_cache["base"]
 
@@ -777,6 +795,20 @@ class TestSpotRetry:
         assert resource["UpdateReplacePolicy"] == "Delete"
 
 
+def test_every_function_uses_the_one_shared_asset(template: Template) -> None:
+    """trikon-go-live Req 7.4: all four functions package the same Lambda_Asset."""
+    functions: Mapping[str, Mapping[str, Any]] = template.find_resources(
+        "AWS::Lambda::Function"
+    )
+    assert sorted(f["Properties"]["FunctionName"] for f in functions.values()) == sorted(
+        _FUNCTION_NAMES
+    )
+    codes = {json.dumps(f["Properties"]["Code"], sort_keys=True) for f in functions.values()}
+    assert len(codes) == 1, codes
+    (code,) = codes
+    assert str(json.loads(code)["S3Key"]).endswith(".zip")
+
+
 def test_app_key_parameter_readable_only_by_its_readers(template: Template) -> None:
     """Cost-cuts Req 4.7: only the orchestrator and Spot_Retry_Handler roles read the App key."""
     roles: Mapping[str, Mapping[str, Any]] = template.find_resources("AWS::IAM::Role")
@@ -903,8 +935,10 @@ class TestTaskStoppedRule:
 
 @pytest.mark.usefixtures("synth_env")
 class TestContext:
-    def test_default_parameter_names(self, tmp_path: Path) -> None:
-        template = _synth(_REQUIRED_CONTEXT, tmp_path)
+    def test_default_parameter_names(
+        self, tmp_path: Path, required_context: Mapping[str, object]
+    ) -> None:
+        template = _synth(required_context, tmp_path)
 
         assert _env(template, _ORCHESTRATOR_FN_NAME)[APP_KEY_PARAMETER_ENV] == (
             APP_KEY_PARAMETER_DEFAULT
@@ -938,8 +972,10 @@ class TestContext:
         ["", "trikon-cloud/no-leading-slash", "/bad name", 42],
         ids=["empty", "no-leading-slash", "bad-charset", "not-a-string"],
     )
-    def test_invalid_parameter_name_names_the_key(self, key: str, raw: object) -> None:
-        context = {**_REQUIRED_CONTEXT, key: raw}
+    def test_invalid_parameter_name_names_the_key(
+        self, key: str, raw: object, required_context: Mapping[str, object]
+    ) -> None:
+        context = {**required_context, key: raw}
         with pytest.raises(ValueError, match=f"^{key}"):
             build_app(context)
 
@@ -951,10 +987,10 @@ class TestContext:
         ],
     )
     def test_obsolete_key_points_to_replacement(
-        self, obsolete: str, replacement: str
+        self, obsolete: str, replacement: str, required_context: Mapping[str, object]
     ) -> None:
         context = {
-            **_REQUIRED_CONTEXT,
+            **required_context,
             obsolete: (
                 f"arn:aws:{_OLD_STORE}:{_TEST_REGION}:{CANONICAL_ACCOUNT_ID}"
                 ":secret:trikon/old-AbCdEf"
@@ -969,8 +1005,10 @@ class TestContext:
     @pytest.mark.parametrize(
         "obsolete", [OBSOLETE_APP_KEY_CONTEXT, OBSOLETE_USAGE_SECRET_CONTEXT]
     )
-    def test_obsolete_key_rejected_even_with_new_keys(self, obsolete: str) -> None:
-        context = {**_BASE_CONTEXT, obsolete: "anything"}
+    def test_obsolete_key_rejected_even_with_new_keys(
+        self, obsolete: str, base_context: Mapping[str, object]
+    ) -> None:
+        context = {**base_context, obsolete: "anything"}
         with pytest.raises(ValueError, match=f"^{obsolete}"):
             build_app(context)
 
@@ -980,10 +1018,14 @@ class TestContext:
         ids=["json-false", "str-false", "str-FALSE", "str-True"],
     )
     def test_use_fargate_spot_reaches_the_orchestrator(
-        self, tmp_path: Path, raw: object, expected: str
+        self,
+        tmp_path: Path,
+        raw: object,
+        expected: str,
+        base_context: Mapping[str, object],
     ) -> None:
         """Cost-cuts Req 8.2: the Spot_Flag (default ``"true"``) is passed through."""
-        template = _synth({**_BASE_CONTEXT, USE_FARGATE_SPOT_CONTEXT: raw}, tmp_path)
+        template = _synth({**base_context, USE_FARGATE_SPOT_CONTEXT: raw}, tmp_path)
         assert _env(template, _ORCHESTRATOR_FN_NAME)["TRIKON_USE_FARGATE_SPOT"] == (
             expected
         )
@@ -992,12 +1034,26 @@ class TestContext:
         "raw", ["", "yes", "0", " true", 1, 0, ["true"]],
         ids=["empty", "yes", "zero-str", "padded", "int-1", "int-0", "list"],
     )
-    def test_invalid_use_fargate_spot_names_the_key(self, raw: object) -> None:
-        context = {**_REQUIRED_CONTEXT, USE_FARGATE_SPOT_CONTEXT: raw}
+    def test_invalid_use_fargate_spot_names_the_key(
+        self, raw: object, required_context: Mapping[str, object]
+    ) -> None:
+        context = {**required_context, USE_FARGATE_SPOT_CONTEXT: raw}
         with pytest.raises(ValueError, match=f"^{USE_FARGATE_SPOT_CONTEXT}"):
             build_app(context)
 
-    def test_required_context_still_fails_loud(self) -> None:
-        context = {k: v for k, v in _REQUIRED_CONTEXT.items() if k != "app_id"}
+    def test_required_context_still_fails_loud(
+        self, required_context: Mapping[str, object]
+    ) -> None:
+        context = {k: v for k, v in required_context.items() if k != "app_id"}
         with pytest.raises(ValueError, match=r"^app_id"):
             build_app(context)
+
+    @pytest.mark.parametrize("raw", [None, ""], ids=["absent", "empty"])
+    def test_lambda_asset_dir_is_required(self, raw: str | None) -> None:
+        """trikon-go-live Req 7.2: the message names the key and the builder."""
+        context: dict[str, object] = dict(_REQUIRED_CONTEXT)
+        if raw is not None:
+            context[LAMBDA_ASSET_DIR_CONTEXT] = raw
+        with pytest.raises(ValueError, match=f"^{LAMBDA_ASSET_DIR_CONTEXT}") as excinfo:
+            build_app(context)
+        assert BUILDER_COMMAND in str(excinfo.value)
