@@ -51,6 +51,7 @@ import jwt
 from trikon_cloud.fargate_runner.logger import get_logger
 from trikon_cloud.fargate_runner.models import (
     CheckRunCreatePayload,
+    CheckRunInterimPayload,
     CheckRunUpdatePayload,
     GithubCheckRunResponse,
     GithubCommentResponse,
@@ -219,9 +220,13 @@ class GithubClient:
         *,
         installation_token: str,
         repo_full_name: str,
-        body: CheckRunCreatePayload,
+        body: CheckRunCreatePayload | CheckRunInterimPayload,
     ) -> GithubCheckRunResponse:
-        """POST ``/repos/{repo}/check-runs`` — create a Check Run."""
+        """POST ``/repos/{repo}/check-runs`` — create a Check Run.
+
+        ``body`` is either a completed verdict or the in-progress
+        Interim_Check_Run, which carries no ``conclusion`` (Req 10.2).
+        """
         response = _retry_with_backoff(
             lambda: self._client.post(
                 f"https://api.github.com/repos/{repo_full_name}/check-runs",

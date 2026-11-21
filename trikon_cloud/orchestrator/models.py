@@ -19,7 +19,8 @@
 Three concern groups, matching design.md's data-contract sections:
 
 * :class:`SqsEventEnvelope`, :class:`SqsRecord`, :class:`SqsRecordAttributes`,
-  :class:`SqsBatchResponse`, :class:`BatchItemFailure` — SQS wire shapes
+  :class:`SqsMessageAttribute`, :class:`SqsBatchResponse`,
+  :class:`BatchItemFailure` — SQS wire shapes
   (design §3.4). The envelope validates the raw AWS Lambda event dict at
   the handler boundary; the batch response is the return type per the
   Lambda batch-item-failure protocol.
@@ -29,28 +30,47 @@ Three concern groups, matching design.md's data-contract sections:
   full ``ecs.RunTask`` request body (design §3.3). Field names match the
   wire form byte-for-byte so ``.model_dump(by_alias=True, mode="json")``
   yields the exact boto3 kwargs dict.
-* :class:`OrchestratorEnvConfig` — the eleven-alias environment-variable
-  contract (design §2.3). Loaded once per Lambda cold start via
+* :class:`OrchestratorEnvConfig` — the environment-variable contract
+  (design §2.3, extended by sandbox-minute-plans Req 11.14, 11.15, 11.18,
+  11.21). Loaded once per Lambda cold start via
   :class:`pydantic_settings.BaseSettings`; a missing or malformed variable
   raises :class:`pydantic.ValidationError` before the first SQS message is
   consumed (Requirement 8.4, design §2.3).
 
-Every model is frozen. Every model uses ``extra="forbid"`` except
-:class:`SqsRecordAttributes` (``extra="allow"`` because AWS adds attribute
-keys over time — design §3.4) and :class:`OrchestratorEnvConfig`
-(``extra="ignore"`` because pydantic-settings sees every process env var,
-not just the eleven aliases we care about).
+Every model is frozen. Every model uses ``extra="forbid"`` except:
+
+* :class:`SqsRecordAttributes` (``extra="allow"`` because AWS adds attribute
+  keys over time — design §3.4);
+* :class:`SqsMessageAttribute` (``extra="ignore"`` because AWS also sends
+  ``stringListValues``, ``binaryValue`` and ``binaryListValues`` keys the
+  handler does not read);
+* :class:`OrchestratorEnvConfig` (``extra="ignore"`` because
+  pydantic-settings sees every process env var, not just the aliases we
+  care about).
 
 See ``.kiro/specs/trikon-cloud-orchestrator/design.md`` §2.2, §2.3, §3.3,
-and §3.4 for the authoritative field definitions.
+and §3.4, and ``.kiro/specs/sandbox-minute-plans/design.md`` (Usage client
+configuration, SQS record model fix, RunTask changes) for the authoritative
+field definitions.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from trikon_cloud.fargate_runner.spot_contract import MAX_ATTEMPTS, Capacity
+from trikon_cloud.usage_client.models import ReservationId, https_base_url
+from trikon_cloud.webhook_receiver.models import SqsJobMessage
 
 # Ordering mirrors the task's declared ``__all__`` list, which walks
 # design.md §3.4 → §3.3 → §2.3. Not isort alphabetical.
@@ -58,9 +78,12 @@ __all__ = [  # noqa: RUF022
     "SqsEventEnvelope",
     "SqsRecord",
     "SqsRecordAttributes",
+    "SqsMessageAttribute",
     "SqsBatchResponse",
     "BatchItemFailure",
+    "VerifyJobMessage",
     "RunTaskCall",
+    "CapacityProviderStrategyItem",
     "NetworkConfiguration",
     "AwsvpcConfiguration",
     "RunTaskOverrides",
@@ -68,7 +91,14 @@ __all__ = [  # noqa: RUF022
     "EnvOverride",
     "EcsTag",
     "OrchestratorEnvConfig",
+    "SpotRetryEnvConfig",
 ]
+
+#: ``TRIKON_VERIFY_JOBS_QUEUE_URL`` shape, shared by the Orchestrator and the
+#: Spot_Retry_Handler.
+_VERIFY_JOBS_QUEUE_URL_PATTERN = (
+    r"^https://sqs\.[a-z0-9-]+\.amazonaws\.com/\d{12}/[A-Za-z0-9_-]{1,80}$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +120,24 @@ class SqsRecordAttributes(BaseModel):
     model_config = ConfigDict(extra="allow", frozen=True)
 
     ApproximateReceiveCount: str
+    # Unix epoch milliseconds, set by SQS on the first receive. Read as the
+    # fallback start of a Job's queue wait (sandbox-minute-plans Req 11.21).
+    ApproximateFirstReceiveTimestamp: str | None = None
+
+
+class SqsMessageAttribute(BaseModel):
+    """One entry of an SQS record's ``messageAttributes`` map.
+
+    ``extra="ignore"`` because AWS also sends ``stringListValues``,
+    ``binaryValue`` and ``binaryListValues`` keys that the handler does not
+    read. The busy re-queue path reads the ``Number`` attribute
+    ``trikon_first_received_at`` (sandbox-minute-plans Req 11.21).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    dataType: str
+    stringValue: str | None = None
 
 
 class SqsRecord(BaseModel):
@@ -101,6 +149,11 @@ class SqsRecord(BaseModel):
     and ``receiptHandle`` are AWS-assigned per-delivery identifiers, echoed
     onto the log context via :func:`append_job_context`
     (design §4.1 STEP 1).
+
+    The remaining fields are the other standard keys of a Lambda SQS event
+    record. They are declared so that a real event validates while
+    ``extra="forbid"`` still rejects anything else (sandbox-minute-plans,
+    SQS record model fix). ``messageAttributes`` defaults to an empty map.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -109,6 +162,12 @@ class SqsRecord(BaseModel):
     receiptHandle: str
     body: str
     attributes: SqsRecordAttributes
+    messageAttributes: dict[str, SqsMessageAttribute] = Field(default_factory=dict)
+    md5OfBody: str | None = None
+    md5OfMessageAttributes: str | None = None
+    eventSource: str | None = None
+    eventSourceARN: str | None = None
+    awsRegion: str | None = None
 
 
 class SqsEventEnvelope(BaseModel):
@@ -157,6 +216,36 @@ class SqsBatchResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Job_Message as the Orchestrator reads it (trikon-cloud-cost-cuts D6).
+# ---------------------------------------------------------------------------
+
+
+class VerifyJobMessage(SqsJobMessage):
+    """A Job_Message as the Orchestrator reads it (cost-cuts Req 8.7, 8.8).
+
+    :class:`SqsJobMessage` (written by the Webhook_Receiver) has neither
+    field, so receiver bytes are unchanged and parse here as Attempt 1
+    (Req 8.8). A Retry_Job (Attempt 2) is written only by the
+    Spot_Retry_Handler and carries the original Reservation_Id.
+
+    ``StrictInt`` rejects ``"2"``, ``2.0`` and ``true``. Any attempt other
+    than 1 or 2, or a ``reservation_id`` that does not match the attempt,
+    raises :class:`pydantic.ValidationError`, which the handler routes
+    through the existing ``malformed_sqs_body`` path (Req 8.7).
+    """
+
+    attempt: Annotated[StrictInt, Field(ge=1, le=MAX_ATTEMPTS)] = 1
+    reservation_id: ReservationId | None = None
+
+    @model_validator(mode="after")
+    def _retry_carries_reservation(self) -> VerifyJobMessage:
+        """Attempt 2 requires ``reservation_id``; Attempt 1 forbids it."""
+        if (self.attempt == MAX_ATTEMPTS) != (self.reservation_id is not None):
+            raise ValueError("attempt 2 requires reservation_id; attempt 1 forbids it")
+        return self
+
+
+# ---------------------------------------------------------------------------
 # §3.3 — ``ecs.RunTask`` request body.
 # ---------------------------------------------------------------------------
 
@@ -182,9 +271,10 @@ class ContainerOverride(BaseModel):
 
     ``name`` is typed :data:`Literal["runner"]` because the Spec 2
     task-definition declares exactly one container named ``runner``;
-    any other name would fail at ``ecs.RunTask`` time. The seven-entry
-    ``environment`` constraint from Requirement 5.2 is enforced by
-    :func:`build_run_task_call` in task 7, NOT by this model — leaving
+    any other name would fail at ``ecs.RunTask`` time. The eight-entry
+    ``environment`` layout (Requirement 5.2's seven, then
+    ``TRIKON_RESERVATION_ID``) is enforced by
+    :func:`build_run_task_call`, NOT by this model — leaving
     the tuple open here so unit tests can construct partial fixtures.
     """
 
@@ -213,10 +303,11 @@ class RunTaskOverrides(BaseModel):
 class AwsvpcConfiguration(BaseModel):
     """The ``awsvpcConfiguration`` sub-object (design §3.3).
 
-    ``assignPublicIp`` is fixed at :data:`Literal["DISABLED"]` because the
-    verify runner has no legitimate need for a public IP and the egress-only
-    security group model (Spec 2) assumes NAT-egress paths only
-    (Requirement 3.3). ``subnets`` and ``securityGroups`` are populated from
+    ``assignPublicIp`` is fixed at :data:`Literal["ENABLED"]`: runner tasks
+    run in public subnets with no NAT gateway and reach the internet through
+    the internet gateway, behind an egress-only security group with zero
+    ingress rules (sandbox-minute-plans Req 14.5, 14.6). ``subnets`` and
+    ``securityGroups`` are populated from
     :attr:`OrchestratorEnvConfig.trikon_runner_subnet_ids` and
     :attr:`OrchestratorEnvConfig.trikon_runner_security_group_ids`.
     """
@@ -225,7 +316,7 @@ class AwsvpcConfiguration(BaseModel):
 
     subnets: tuple[str, ...]
     securityGroups: tuple[str, ...]
-    assignPublicIp: Literal["DISABLED"]
+    assignPublicIp: Literal["ENABLED"]
 
 
 class NetworkConfiguration(BaseModel):
@@ -256,22 +347,37 @@ class EcsTag(BaseModel):
     value: str
 
 
-class RunTaskCall(BaseModel):
-    """The full ``ecs.RunTask`` request body (design §3.3).
+class CapacityProviderStrategyItem(BaseModel):
+    """One entry of the RunTask ``capacityProviderStrategy`` (cost-cuts D5).
 
-    ``.model_dump(by_alias=True, mode="json")`` on an instance yields the
-    exact kwargs dict passed to ``boto3.client("ecs").run_task(**...)``.
-    Four of the seven top-level fields are pinned by :data:`Literal`:
+    ``capacityProvider`` is ``FARGATE_SPOT`` or ``FARGATE``; the weight is
+    pinned at 1 because the strategy always has exactly one entry.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    capacityProvider: Capacity
+    weight: Literal[1]
+
+
+class RunTaskCall(BaseModel):
+    """The full ``ecs.RunTask`` request body (design §3.3, cost-cuts D5).
+
+    ``.model_dump(by_alias=True, mode="json", exclude_none=True)`` on an
+    instance yields the exact kwargs dict passed to
+    ``boto3.client("ecs").run_task(**...)``. Pinned fields:
 
     * ``cluster`` is ``"trikon-verify-cluster"`` for the entire spec
       (Requirement 3.2, design §3.3).
-    * ``launchType`` is ``"FARGATE"`` — the only launch type Spec 2
-      supports.
+    * Exactly one of ``launchType`` (``"FARGATE"``) and
+      ``capacityProviderStrategy`` (one entry) is set, so a request can
+      never fall back to the cluster's default strategy. The
+      Orchestrator always sends the strategy (cost-cuts D5).
     * ``count`` is ``1`` — every RunTask call launches exactly one task
       instance (Requirement 3.1).
     * ``tags`` is a fixed-length ``tuple[EcsTag, EcsTag, EcsTag]`` — the
       three-tag contract from Requirement 3.5; the order-significant
-      layout is enforced at :func:`build_run_task_call` in task 7.
+      layout is enforced at :func:`build_run_task_call`.
 
     ``taskDefinition`` is the fully qualified ``family:revision`` string
     resolved once per cold start by :class:`TaskDefinitionResolver` — see
@@ -282,11 +388,19 @@ class RunTaskCall(BaseModel):
 
     cluster: Literal["trikon-verify-cluster"]
     taskDefinition: str
-    launchType: Literal["FARGATE"]
+    launchType: Literal["FARGATE"] | None = None
+    capacityProviderStrategy: tuple[CapacityProviderStrategyItem] | None = None
     count: Literal[1]
     networkConfiguration: NetworkConfiguration
     overrides: RunTaskOverrides
     tags: tuple[EcsTag, EcsTag, EcsTag]
+
+    @model_validator(mode="after")
+    def _exactly_one_placement(self) -> RunTaskCall:
+        """Require exactly one of ``launchType`` and ``capacityProviderStrategy``."""
+        if (self.launchType is None) == (self.capacityProviderStrategy is None):
+            raise ValueError("exactly one of launchType and capacityProviderStrategy")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +411,11 @@ class RunTaskCall(BaseModel):
 class OrchestratorEnvConfig(BaseSettings):
     """Orchestrator Lambda environment variables (design §2.3).
 
-    The eleven aliases below are populated by the CDK stack's Lambda
+    The aliases below are populated by the CDK stack's Lambda
     environment block, except ``AWS_REGION`` which the Lambda runtime
-    injects. A missing or malformed variable raises
+    injects. ``TRIKON_QUOTA_TIME_BUDGET_SECONDS`` and
+    ``TRIKON_QUEUE_WAIT_LIMIT_SECONDS`` are normally left to their
+    defaults. A missing or malformed variable raises
     :class:`pydantic.ValidationError` at cold start — the handler fails
     before the first SQS message is dequeued, which is the correct
     behavior for a misconfigured dispatcher (Requirement 8.4, design §2.3).
@@ -331,8 +447,9 @@ class OrchestratorEnvConfig(BaseSettings):
     trikon_verdicts_table: str = Field(
         alias="TRIKON_VERDICTS_TABLE", default="trikon_verdicts"
     )
-    trikon_app_private_key_secret_arn: str = Field(
-        alias="TRIKON_APP_PRIVATE_KEY_SECRET_ARN"
+    # SSM SecureString parameter name of the GitHub App private key.
+    trikon_app_private_key_parameter_name: str = Field(
+        alias="TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", min_length=2, pattern=r"^/"
     )
     trikon_app_id: int = Field(alias="TRIKON_APP_ID", ge=1)
     trikon_check_run_details_url_template: str = Field(
@@ -341,6 +458,44 @@ class OrchestratorEnvConfig(BaseSettings):
     )
     aws_region: str = Field(alias="AWS_REGION", default="us-east-1")
     trikon_log_level: str = Field(alias="TRIKON_LOG_LEVEL", default="INFO")
+    # Usage_API base URL and Trikon_Web_App_URL (sandbox-minute-plans
+    # Req 11.14, 11.15). https only; trailing "/" stripped.
+    trikon_web_api_url: str = Field(alias="TRIKON_WEB_API_URL")
+    trikon_web_app_url: str = Field(alias="TRIKON_WEB_APP_URL")
+    # SSM SecureString parameter name of the Usage_Secret.
+    trikon_cloud_usage_secret_parameter_name: str = Field(
+        alias="TRIKON_CLOUD_USAGE_SECRET_PARAMETER_NAME", min_length=2, pattern=r"^/"
+    )
+    # Quota_Time_Budget: total time for one Quota_Endpoint call, retries included.
+    trikon_quota_time_budget_seconds: float = Field(
+        alias="TRIKON_QUOTA_TIME_BUDGET_SECONDS", default=10.0, gt=0, le=20
+    )
+    # Queue_Wait_Limit (Req 11.20, 11.21).
+    trikon_queue_wait_limit_seconds: int = Field(
+        alias="TRIKON_QUEUE_WAIT_LIMIT_SECONDS", default=1800, ge=60, le=86_400
+    )
+    # The orchestrator's own source queue, for busy copies (Req 11.18); CDK
+    # sets it from the imported queue.
+    trikon_verify_jobs_queue_url: str = Field(
+        alias="TRIKON_VERIFY_JOBS_QUEUE_URL",
+        pattern=r"^https://sqs\.[a-z0-9-]+\.amazonaws\.com/\d{12}/[A-Za-z0-9_-]{1,80}$",
+    )
+    # Spot_Flag (cost-cuts Req 8.2-8.4): Attempt 1 runs on FARGATE_SPOT when on.
+    trikon_use_fargate_spot: bool = Field(alias="TRIKON_USE_FARGATE_SPOT", default=True)
+    # The Runner's per-PR state table, read for the Interim_Check_Run id (Req 11).
+    trikon_pr_state_table: str = Field(
+        alias="TRIKON_PR_STATE_TABLE", default="trikon_pr_state"
+    )
+    # The verify-jobs queue's maxReceiveCount (Req 11.5).
+    trikon_verify_jobs_max_receive_count: int = Field(
+        alias="TRIKON_VERIFY_JOBS_MAX_RECEIVE_COUNT", default=3, ge=1, le=1000
+    )
+
+    @field_validator("trikon_web_api_url", "trikon_web_app_url")
+    @classmethod
+    def _https_base_url(cls, value: str) -> str:
+        """Require an https base URL and strip any trailing ``/`` (Req 11.15)."""
+        return https_base_url(value)
 
     @field_validator(
         "trikon_runner_subnet_ids",
@@ -365,3 +520,52 @@ class OrchestratorEnvConfig(BaseSettings):
         if isinstance(value, str):
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return tuple(value)
+
+
+# ---------------------------------------------------------------------------
+# Spot_Retry_Handler Lambda environment (trikon-cloud-cost-cuts Req 9, 11).
+# ---------------------------------------------------------------------------
+
+
+class SpotRetryEnvConfig(BaseSettings):
+    """Spot_Retry_Handler Lambda environment variables (cost-cuts design).
+
+    Populated by the CDK stack's Lambda environment block, except
+    ``AWS_REGION`` which the Lambda runtime injects. A missing or malformed
+    variable raises :class:`pydantic.ValidationError` at cold start, before
+    the first Task_Stopped_Event is handled. The queue URL pattern, the
+    details-URL template default and the App key parameter rules match
+    :class:`OrchestratorEnvConfig`.
+
+    ``extra="ignore"`` because pydantic-settings sees every process env var.
+    """
+
+    model_config = SettingsConfigDict(extra="ignore", frozen=True)
+
+    trikon_app_id: int = Field(alias="TRIKON_APP_ID", ge=1)
+    # SSM SecureString parameter name of the GitHub App private key.
+    trikon_app_private_key_parameter_name: str = Field(
+        alias="TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", min_length=2, pattern=r"^/"
+    )
+    # Destination of the Retry_Job (Req 9.3).
+    trikon_verify_jobs_queue_url: str = Field(
+        alias="TRIKON_VERIFY_JOBS_QUEUE_URL",
+        pattern=_VERIFY_JOBS_QUEUE_URL_PATTERN,
+    )
+    trikon_verdicts_table: str = Field(
+        alias="TRIKON_VERDICTS_TABLE", default="trikon_verdicts"
+    )
+    # The Runner's per-PR state table, read for the Interim_Check_Run id.
+    trikon_pr_state_table: str = Field(
+        alias="TRIKON_PR_STATE_TABLE", default="trikon_pr_state"
+    )
+    # The dedupe claim store (cost-cuts D3).
+    trikon_spot_retries_table: str = Field(
+        alias="TRIKON_SPOT_RETRIES_TABLE", default="trikon-cloud-spot-retries"
+    )
+    trikon_check_run_details_url_template: str = Field(
+        alias="TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE",
+        default="https://api.trikon.unideploy.com/audits/{delivery_id}",
+    )
+    trikon_log_level: str = Field(alias="TRIKON_LOG_LEVEL", default="INFO")
+    aws_region: str = Field(alias="AWS_REGION", default="us-east-1")

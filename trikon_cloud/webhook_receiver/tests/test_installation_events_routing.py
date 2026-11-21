@@ -14,7 +14,7 @@ Dedicated test file for
 * Group 2 — pure payload-mapping tests against
   ``_build_installation_message``.
 * Group 3 — end-to-end HTTP status tests through ``on_github_webhook``
-  with moto-backed SQS + Secrets Manager.
+  with moto-backed SQS + SSM Parameter Store.
 * Group 4 — queue-picker isolation tests verifying installation traffic
   hits only ``_installation_events_writer`` and pull_request traffic
   hits only ``_sqs_writer``.
@@ -56,6 +56,7 @@ from trikon_cloud.webhook_receiver.tests.conftest import (
     compute_signature,
     make_api_gateway_event,
     make_pull_request_payload,
+    put_webhook_secret_parameter,
 )
 
 # ---------------------------------------------------------------------------
@@ -172,7 +173,7 @@ def _reset_handler_state() -> None:
     handler._webhook_secret = None
     handler._sqs_writer = None
     handler._installation_events_writer = None
-    handler._secrets_client = None
+    handler._ssm_client = None
 
 
 @pytest.fixture(autouse=True)
@@ -184,9 +185,9 @@ def _reset_handler_module_state() -> None:
 def _install_moto_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[str, str, str, Any]:
-    """Create moto SQS queues (verify + installation) + Secrets Manager secret + env vars.
+    """Create moto SQS queues (verify + installation) + SSM webhook secret + env vars.
 
-    Returns ``(verify_queue_url, installation_queue_url, secret_arn,
+    Returns ``(verify_queue_url, installation_queue_url, parameter_name,
     real_sqs_client)``. Must be called inside a ``@mock_aws`` context —
     the real boto3 clients this function constructs are moto-backed
     only while the decorator is active.
@@ -203,18 +204,15 @@ def _install_moto_env(
     installation_queue_url = real_sqs.create_queue(
         QueueName="trikon-cloud-installation-events-test"
     )["QueueUrl"]
-    real_secrets = boto3.client("secretsmanager", region_name="us-east-1")
-    secret_arn = real_secrets.create_secret(
-        Name="trikon-cloud/github-app-webhook-secret-test",
-        SecretString=WEBHOOK_SECRET_BYTES.decode("utf-8"),
-    )["ARN"]
+    real_ssm = boto3.client("ssm", region_name="us-east-1")
+    parameter_name = put_webhook_secret_parameter(real_ssm)
 
-    monkeypatch.setenv("TRIKON_WEBHOOK_SECRET_ARN", secret_arn)
+    monkeypatch.setenv("TRIKON_WEBHOOK_SECRET_PARAMETER_NAME", parameter_name)
     monkeypatch.setenv("TRIKON_VERIFY_JOBS_QUEUE_URL", verify_queue_url)
     monkeypatch.setenv(
         "TRIKON_INSTALLATION_EVENTS_QUEUE_URL", installation_queue_url
     )
-    return verify_queue_url, installation_queue_url, secret_arn, real_sqs
+    return verify_queue_url, installation_queue_url, parameter_name, real_sqs
 
 
 def _swap_sqs_writer_boto3(
@@ -223,9 +221,9 @@ def _swap_sqs_writer_boto3(
     """Replace ``sqs_writer.boto3`` with a namespace whose ``client`` returns ``spy``.
 
     Scopes the replacement to the SQS writer module — the handler's
-    ``boto3.client("secretsmanager")`` construction is unaffected, so
-    the moto-backed Secrets Manager continues to serve the webhook
-    secret.
+    ``boto3.client("ssm")`` construction is unaffected, so the
+    moto-backed SSM SecureString parameter continues to serve the
+    webhook secret.
     """
     mock_boto3 = types.SimpleNamespace(client=lambda *_a, **_kw: spy)
     monkeypatch.setattr(sqs_writer, "boto3", mock_boto3)
@@ -436,7 +434,7 @@ def test_build_message_installation_repositories_removed_maps_repositories_remov
 @mock_aws
 def test_installation_created_returns_202(monkeypatch: pytest.MonkeyPatch) -> None:
     """Happy path — signed ``installation.created`` returns 202 with the delivery id echoed (Requirement 4.6)."""
-    _verify_url, _installation_url, _secret_arn, real_sqs = _install_moto_env(
+    _verify_url, _installation_url, _parameter_name, real_sqs = _install_moto_env(
         monkeypatch
     )
     spy = SpySqsClient(real_client=real_sqs)
@@ -459,7 +457,7 @@ def test_installation_repositories_added_returns_202(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Happy path variant — signed ``installation_repositories.added`` returns 202."""
-    _verify_url, _installation_url, _secret_arn, real_sqs = _install_moto_env(
+    _verify_url, _installation_url, _parameter_name, real_sqs = _install_moto_env(
         monkeypatch
     )
     spy = SpySqsClient(real_client=real_sqs)

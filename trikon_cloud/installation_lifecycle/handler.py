@@ -326,7 +326,7 @@ def handle_installation_created(
     # (a) Render policies (pure — no IO).
     policy = render_installation_policy_document(
         message.installation_id,
-        app_private_key_secret_arn=env.trikon_app_private_key_secret_arn,
+        app_private_key_parameter_name=env.trikon_app_private_key_parameter_name,
         account_id=env.trikon_aws_account_id,
         region=env.aws_region,
     )

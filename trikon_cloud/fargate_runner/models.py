@@ -26,6 +26,8 @@ Every model in this module maps 1:1 onto a subsection of design.md §5:
   not just at the value level.
 * :class:`GithubCheckRunResponse`, :class:`GithubCommentResponse` —
   response shapes (design §5.6); the runner reads ``id`` only.
+* :class:`CheckRunInterimPayload` — the in-progress Interim_Check_Run
+  posted on a Spot SIGTERM. It has no ``conclusion`` field (Req 10.2).
 
 Every response model carries ``ConfigDict(extra="allow", frozen=True)``
 so GitHub can add fields over time without breaking validation, while
@@ -35,10 +37,16 @@ still preventing the runner from mutating the parsed body.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from trikon_cloud.fargate_runner.spot_contract import (
+    MAX_ATTEMPTS,
+    ON_DEMAND_CAPACITY,
+    Capacity,
+)
 
 # Ordering mirrors design.md §5.1 → §5.6, not isort alphabetical.
 __all__ = [  # noqa: RUF022
@@ -51,6 +59,9 @@ __all__ = [  # noqa: RUF022
     "CheckRunOutput",
     "CheckRunCreatePayload",
     "CheckRunUpdatePayload",
+    "INTERIM_CHECK_RUN_TITLE",
+    "INTERIM_CHECK_RUN_SUMMARY",
+    "CheckRunInterimPayload",
 ]
 
 
@@ -105,13 +116,27 @@ class RunnerEnvConfig(BaseSettings):
     evidence_bucket_name: str = Field(
         alias="TRIKON_EVIDENCE_BUCKET", default="trikon-cloud-evidence"
     )
-    app_private_key_secret_arn: str = Field(alias="TRIKON_APP_PRIVATE_KEY_SECRET_ARN")
+    # SSM SecureString parameter name (e.g.
+    # ``/trikon-cloud/github-app-private-key``), read by
+    # ``entrypoint._fetch_app_private_key``.
+    app_private_key_parameter_name: str = Field(
+        alias="TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME",
+        min_length=2,
+        pattern=r"^/",
+    )
     app_id: int = Field(alias="TRIKON_APP_ID", ge=1)
     check_run_details_url_template: str = Field(
         alias="TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE",
         default="https://api.trikon.unideploy.com/audits/{audit_id}",
     )
     log_level: str = Field(alias="TRIKON_LOG_LEVEL", default="INFO")
+
+    # Spot retry contract (Req 8.6, 10). Set by the Orchestrator as
+    # RunTask overrides. The defaults are the safe on-demand case: a task
+    # without these entries fails closed on SIGTERM and never posts an
+    # Interim_Check_Run.
+    attempt: int = Field(alias="TRIKON_ATTEMPT", default=1, ge=1, le=MAX_ATTEMPTS)
+    capacity: Capacity = Field(alias="TRIKON_CAPACITY", default=ON_DEMAND_CAPACITY)
 
     @property
     def repo_working_dir(self) -> Path:
@@ -271,6 +296,31 @@ class CheckRunUpdatePayload(BaseModel):
     conclusion: str
     output: CheckRunOutput
     details_url: str
+
+
+INTERIM_CHECK_RUN_TITLE: Final = "Trikon verification interrupted, retrying"
+INTERIM_CHECK_RUN_SUMMARY: Final = (
+    "The Trikon Cloud runner for this pull request was interrupted because its "
+    "Fargate Spot capacity was reclaimed. A retry on on-demand capacity is under "
+    "way and will update this check."
+)
+
+
+class CheckRunInterimPayload(BaseModel):
+    """POST body of the Interim_Check_Run. Has no ``conclusion`` field at all,
+    so it cannot carry one (D1, Req 10.2).
+
+    GitHub treats ``neutral`` as passing for required checks; a check
+    with no conclusion keeps a required check pending until the retry
+    PATCHes it to a completed verdict.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: Literal["Trikon"]
+    head_sha: str
+    status: Literal["in_progress"]
+    output: CheckRunOutput
 
 
 # ---------------------------------------------------------------------------

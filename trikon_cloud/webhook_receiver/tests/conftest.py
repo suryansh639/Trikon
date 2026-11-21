@@ -20,8 +20,10 @@ Provides:
   ``pull_request.<action>`` payload dict (memo §5.1 shape).
 * :func:`make_api_gateway_event` — wraps a body + headers in the
   API Gateway HTTP API v2 event envelope.
+* :func:`put_webhook_secret_parameter` — stores the webhook secret as a
+  moto SSM SecureString parameter.
 * :func:`mock_aws_env`, :func:`sqs_queue`,
-  :func:`secrets_manager_secret` — pytest fixtures that stand up
+  :func:`ssm_webhook_secret_parameter` — pytest fixtures that stand up
   moto-backed AWS credentials + resources for tests that exercise the
   Wave-2 leaves against a mocked AWS control plane.
 
@@ -46,6 +48,7 @@ from moto import mock_aws
 # ---------------------------------------------------------------------------
 
 WEBHOOK_SECRET_BYTES: bytes = b"trikon-test-secret-not-a-real-secret"
+WEBHOOK_SECRET_PARAMETER_NAME: str = "/trikon-cloud/github-webhook-secret-test"
 
 CANONICAL_INSTALLATION_ID: int = 12345678
 CANONICAL_REPO_FULL_NAME: str = "octocat/hello-world"
@@ -141,7 +144,7 @@ def mock_aws_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch is function-scoped, so this fixture is function-scoped
     too — moto's ``mock_aws()`` context lives inside each dependent
-    fixture (see :func:`sqs_queue`, :func:`secrets_manager_secret`) so
+    fixture (see :func:`sqs_queue`, :func:`ssm_webhook_secret_parameter`) so
     per-test isolation is guaranteed.
     """
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
@@ -164,20 +167,31 @@ def sqs_queue(mock_aws_env: None) -> Iterator[str]:
         yield str(resp["QueueUrl"])
 
 
-@pytest.fixture
-def secrets_manager_secret(mock_aws_env: None) -> Iterator[str]:
-    """Create a moto-backed Secrets Manager secret and yield the ARN.
+def put_webhook_secret_parameter(
+    ssm_client: Any,
+    *,
+    name: str = WEBHOOK_SECRET_PARAMETER_NAME,
+    value: bytes = WEBHOOK_SECRET_BYTES,
+) -> str:
+    """Store ``value`` as a moto SSM SecureString parameter and return its name.
 
-    The stored ``SecretString`` is ``WEBHOOK_SECRET_BYTES`` decoded as
-    UTF-8, matching the memo §3.5 rotation shape — the receiver reads
-    the string, encodes it back to bytes, and passes those bytes to
-    :func:`hmac_verifier.verify_signature`.
+    Must be called inside an active ``mock_aws`` context. The stored
+    value is ``value`` decoded as UTF-8 — the receiver reads the string
+    with ``WithDecryption=True``, encodes it back to bytes, and passes
+    those bytes to :func:`hmac_verifier.verify_signature`.
     """
+    ssm_client.put_parameter(
+        Name=name,
+        Value=value.decode("utf-8"),
+        Type="SecureString",
+    )
+    return name
+
+
+@pytest.fixture
+def ssm_webhook_secret_parameter(mock_aws_env: None) -> Iterator[str]:
+    """Create a moto-backed SSM SecureString webhook secret and yield its name."""
     del mock_aws_env  # dependency only; monkeypatch has fired by now
     with mock_aws():
-        client = boto3.client("secretsmanager", region_name="us-east-1")
-        resp = client.create_secret(
-            Name="trikon-cloud/github-app-webhook-secret-test",
-            SecretString=WEBHOOK_SECRET_BYTES.decode("utf-8"),
-        )
-        yield str(resp["ARN"])
+        client = boto3.client("ssm", region_name="us-east-1")
+        yield put_webhook_secret_parameter(client)

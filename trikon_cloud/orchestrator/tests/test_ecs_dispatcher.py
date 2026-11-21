@@ -11,8 +11,9 @@ Covers the four concern groups declared in the sibling module (design.md
 
 * :func:`build_run_task_call` — the pure, IO-free builder. Tests
   exercise the six shape invariants from design.md §10.4 Property 4:
-  the seven ``EnvOverride`` entries appear in the fixed order
-  (``TRIKON_INSTALLATION_ID`` first, ``TRIKON_DELIVERY_ID`` last), the
+  the eight ``EnvOverride`` entries appear in the fixed order
+  (``TRIKON_INSTALLATION_ID`` first, ``TRIKON_DELIVERY_ID`` seventh,
+  ``TRIKON_RESERVATION_ID`` last), ``assignPublicIp`` is ``ENABLED``, the
   two integer :class:`SqsJobMessage` fields (``installation_id``,
   ``pr_number``) are stringified via :func:`str`, ``taskRoleArn`` is
   ``arn:aws:iam::{account}:role/trikon-verify-task-role-{installation_id}``
@@ -41,6 +42,8 @@ Covers the four concern groups declared in the sibling module (design.md
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from hypothesis import given, settings
@@ -48,12 +51,14 @@ from hypothesis import strategies as st
 
 from trikon_cloud.orchestrator.ecs_dispatcher import (
     RunTaskDispatchResult,
+    RunTaskNoTaskError,
     TaskDefinitionResolver,
     build_run_task_call,
     classify_client_error,
     submit_run_task,
 )
 from trikon_cloud.orchestrator.models import (
+    CapacityProviderStrategyItem,
     EnvOverride,
     OrchestratorEnvConfig,
     RunTaskCall,
@@ -70,6 +75,10 @@ from .conftest import (
     CANONICAL_REPO_FULL_NAME,
     make_sqs_job_message,
 )
+
+# A UUID-shaped Reservation_Id, as the Quota_Endpoint's ``allowed``
+# decision returns (sandbox-minute-plans Req 11.3).
+_RESERVATION_ID = "00000000-0000-4000-8000-000000000001"
 
 # ---------------------------------------------------------------------------
 # Hand-rolled Protocol implementations — spy on kwargs, return canned
@@ -160,36 +169,47 @@ def test_build_run_task_call_produces_valid_run_task_call() -> None:
     """Feature: trikon-cloud-orchestrator, Property 4: RunTaskCall shape invariant.
 
     The builder returns a :class:`RunTaskCall` with every top-level
-    field pinned per design.md §3.3: ``cluster``, ``launchType``, and
-    ``count`` at their :data:`Literal` values, ``taskDefinition`` at
-    the resolver-supplied ``family:revision`` string, and the network
+    field pinned per design.md §3.3: ``cluster`` and ``count`` at their
+    :data:`Literal` values, a one-entry capacity provider strategy and no
+    ``launchType`` (cost-cuts D5), ``taskDefinition`` at the
+    resolver-supplied ``family:revision`` string, and the network
     configuration populated from :class:`OrchestratorEnvConfig`.
     """
     message = make_sqs_job_message()
     env = OrchestratorEnvConfig()
 
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:17"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
 
     assert isinstance(call, RunTaskCall)
     assert call.cluster == "trikon-verify-cluster"
-    assert call.launchType == "FARGATE"
+    assert call.launchType is None
+    assert call.capacityProviderStrategy == (
+        CapacityProviderStrategyItem(capacityProvider="FARGATE_SPOT", weight=1),
+    )
     assert call.count == 1
     assert call.taskDefinition == "trikon-verify-runner:17"
     awsvpc = call.networkConfiguration.awsvpcConfiguration
     assert awsvpc.subnets == env.trikon_runner_subnet_ids
     assert awsvpc.securityGroups == env.trikon_runner_security_group_ids
-    assert awsvpc.assignPublicIp == "DISABLED"
+    # Public subnets, no NAT gateway (sandbox-minute-plans Req 14.5).
+    assert awsvpc.assignPublicIp == "ENABLED"
 
 
 def test_build_run_task_call_env_overrides_in_fixed_order_with_correct_values() -> None:
     """Feature: trikon-cloud-orchestrator, Property 4: RunTaskCall shape invariant.
 
-    Requirement 5.2 pins the seven ``EnvOverride`` entries at a fixed
-    declaration order. ``TRIKON_INSTALLATION_ID`` is first,
-    ``TRIKON_DELIVERY_ID`` is last, and the five entries between them
-    appear in the exact sequence prescribed by design.md §3.3. Also
+    Requirement 5.2 pins the seven original ``EnvOverride`` entries at a
+    fixed declaration order, ``TRIKON_INSTALLATION_ID`` first and
+    ``TRIKON_DELIVERY_ID`` seventh. sandbox-minute-plans Req 11.3 adds
+    an eighth, ``TRIKON_RESERVATION_ID``, after them, and cost-cuts
+    Req 8.6 appends ``TRIKON_ATTEMPT`` and ``TRIKON_CAPACITY``. Also
     Requirement 5.4: string fields are copied byte-for-byte from
     :class:`SqsJobMessage` — no normalization.
     """
@@ -197,14 +217,21 @@ def test_build_run_task_call_env_overrides_in_fixed_order_with_correct_values() 
     env = OrchestratorEnvConfig()
 
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:17"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
     container_overrides = call.overrides.containerOverrides
     assert len(container_overrides) == 1  # Requirement 5.1.
     assert container_overrides[0].name == "runner"
 
     environment: tuple[EnvOverride, ...] = container_overrides[0].environment
-    assert len(environment) == 7  # Requirement 5.2 — exactly seven entries.
+    # Requirement 5.2's seven entries, TRIKON_RESERVATION_ID (Req 11.3),
+    # then TRIKON_ATTEMPT and TRIKON_CAPACITY (cost-cuts Req 8.6).
+    assert len(environment) == 10
 
     expected: list[tuple[str, str]] = [
         ("TRIKON_INSTALLATION_ID", str(CANONICAL_INSTALLATION_ID)),
@@ -214,15 +241,54 @@ def test_build_run_task_call_env_overrides_in_fixed_order_with_correct_values() 
         ("TRIKON_BASE_SHA", CANONICAL_BASE_SHA),
         ("TRIKON_EVENT_TYPE", CANONICAL_EVENT_TYPE),
         ("TRIKON_DELIVERY_ID", CANONICAL_DELIVERY_ID),
+        ("TRIKON_RESERVATION_ID", _RESERVATION_ID),
+        ("TRIKON_ATTEMPT", "1"),
+        ("TRIKON_CAPACITY", "FARGATE_SPOT"),
     ]
     actual: list[tuple[str, str]] = [(entry.name, entry.value) for entry in environment]
     assert actual == expected
 
-    # Sentinel checks pinning the two boundary entries — the doc is
-    # explicit about ``TRIKON_INSTALLATION_ID`` first and
-    # ``TRIKON_DELIVERY_ID`` last.
+    # Sentinel checks pinning the boundary entries: ``TRIKON_INSTALLATION_ID``
+    # first, ``TRIKON_DELIVERY_ID`` seventh, ``TRIKON_RESERVATION_ID`` eighth,
+    # ``TRIKON_CAPACITY`` last.
     assert environment[0].name == "TRIKON_INSTALLATION_ID"
-    assert environment[-1].name == "TRIKON_DELIVERY_ID"
+    assert environment[6].name == "TRIKON_DELIVERY_ID"
+    assert environment[7].name == "TRIKON_RESERVATION_ID"
+    assert environment[-1].name == "TRIKON_CAPACITY"
+
+
+@pytest.mark.parametrize(
+    ("attempt", "capacity"),
+    [(1, "FARGATE_SPOT"), (1, "FARGATE"), (2, "FARGATE")],
+)
+def test_build_run_task_call_strategy_and_attempt_env_follow_arguments(
+    attempt: Literal[1, 2], capacity: Literal["FARGATE", "FARGATE_SPOT"]
+) -> None:
+    """The strategy names ``capacity``; the last two env entries carry both args.
+
+    cost-cuts D5 and Req 8.3-8.6: the builder always sends a one-entry
+    ``capacityProviderStrategy`` and never ``launchType``, so the boto3
+    kwargs (``exclude_none=True``) have no ``launchType`` key.
+    """
+    call = build_run_task_call(
+        make_sqs_job_message(),
+        env=OrchestratorEnvConfig(),
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=attempt,
+        capacity=capacity,
+    )
+
+    environment = call.overrides.containerOverrides[0].environment
+    assert [(e.name, e.value) for e in environment[-2:]] == [
+        ("TRIKON_ATTEMPT", str(attempt)),
+        ("TRIKON_CAPACITY", capacity),
+    ]
+    dumped = call.model_dump(by_alias=True, mode="json", exclude_none=True)
+    assert "launchType" not in dumped
+    assert dumped["capacityProviderStrategy"] == [
+        {"capacityProvider": capacity, "weight": 1}
+    ]
 
 
 def test_build_run_task_call_integer_fields_stringified_via_str() -> None:
@@ -240,7 +306,12 @@ def test_build_run_task_call_integer_fields_stringified_via_str() -> None:
     env = OrchestratorEnvConfig()
 
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:1"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:1",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
     env_by_name: dict[str, str] = {
         entry.name: entry.value
@@ -267,7 +338,12 @@ def test_build_run_task_call_task_role_arn_matches_requirement_3_4_format() -> N
     env = OrchestratorEnvConfig()
 
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:17"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
 
     expected = (
@@ -290,7 +366,12 @@ def test_build_run_task_call_tags_ordered_installation_repo_pr() -> None:
     env = OrchestratorEnvConfig()
 
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:17"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
 
     assert len(call.tags) == 3
@@ -320,19 +401,28 @@ def test_submit_run_task_invokes_run_task_exactly_once_with_dumped_kwargs() -> N
     message = make_sqs_job_message()
     env = OrchestratorEnvConfig()
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:17"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
     ecs_client = _RecordingEcsClient()
 
     submit_run_task(call, ecs_client=ecs_client)
 
     assert len(ecs_client.calls) == 1
-    dumped = call.model_dump(by_alias=True, mode="json")
+    dumped = call.model_dump(by_alias=True, mode="json", exclude_none=True)
     assert ecs_client.calls[0] == dumped
     # Sentinel checks on the top-level wire keys.
     assert ecs_client.calls[0]["cluster"] == "trikon-verify-cluster"
     assert ecs_client.calls[0]["taskDefinition"] == "trikon-verify-runner:17"
-    assert ecs_client.calls[0]["launchType"] == "FARGATE"
+    assert "launchType" not in ecs_client.calls[0]
+    assert ecs_client.calls[0]["capacityProviderStrategy"] == [
+        {"capacityProvider": "FARGATE_SPOT", "weight": 1}
+    ]
+    assert None not in ecs_client.calls[0].values()
 
 
 def test_submit_run_task_returns_dispatch_result_with_first_task_arn() -> None:
@@ -346,7 +436,12 @@ def test_submit_run_task_returns_dispatch_result_with_first_task_arn() -> None:
     message = make_sqs_job_message()
     env = OrchestratorEnvConfig()
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:17"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
     task_arn = "arn:aws:ecs:us-east-1:000000000000:task/trikon-verify-cluster/deadbeef"
     ecs_client = _RecordingEcsClient(response={"tasks": [{"taskArn": task_arn}]})
@@ -368,7 +463,12 @@ def test_submit_run_task_propagates_client_error_unhandled() -> None:
     message = make_sqs_job_message()
     env = OrchestratorEnvConfig()
     call = build_run_task_call(
-        message, env=env, task_definition="trikon-verify-runner:17"
+        message,
+        env=env,
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
     )
     ecs_client = _RecordingEcsClient(
         raise_exc=_client_error("TaskDefinitionNotFound")
@@ -378,6 +478,43 @@ def test_submit_run_task_propagates_client_error_unhandled() -> None:
         submit_run_task(call, ecs_client=ecs_client)
 
     # The call still ran — the exception happens after run_task is invoked.
+    assert len(ecs_client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("failures", "expected_reason"),
+    [
+        (
+            [{"arn": "arn:x", "reason": "Capacity is unavailable at this time."}],
+            "Capacity is unavailable at this time.",
+        ),
+        ([{"arn": "arn:x"}], None),
+        ([], None),
+    ],
+)
+def test_submit_run_task_raises_no_task_error_when_tasks_empty(
+    failures: list[dict[str, str]], expected_reason: str | None
+) -> None:
+    """``tasks == []`` raises :class:`RunTaskNoTaskError` with ``failures[0].reason``.
+
+    RunTask reports placement failures (e.g. no Spot capacity) in
+    ``failures`` with an empty ``tasks`` list, not as a ``ClientError``
+    (cost-cuts design D5). Previously this was an ``IndexError``.
+    """
+    call = build_run_task_call(
+        make_sqs_job_message(),
+        env=OrchestratorEnvConfig(),
+        task_definition="trikon-verify-runner:17",
+        reservation_id=_RESERVATION_ID,
+        attempt=1,
+        capacity="FARGATE_SPOT",
+    )
+    ecs_client = _RecordingEcsClient(response={"tasks": [], "failures": failures})
+
+    with pytest.raises(RunTaskNoTaskError) as exc_info:
+        submit_run_task(call, ecs_client=ecs_client)
+
+    assert exc_info.value.reason == expected_reason
     assert len(ecs_client.calls) == 1
 
 

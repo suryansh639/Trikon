@@ -44,14 +44,15 @@ from trikon_cloud.fargate_runner.infra.fargate_runner_stack import FargateRunner
 
 _TEST_ACCOUNT: str = "000000000000"
 _TEST_REGION: str = "us-east-1"
-_MOCK_APP_KEY_ARN: str = (
-    "arn:aws:secretsmanager:us-east-1:000000000000:"
-    "secret:trikon-cloud/github-app-private-key-abcdef"
-)
+_APP_KEY_PARAMETER_NAME: str = "/trikon-cloud/github-app-private-key"
 # ``FargateRunnerStack`` requires ``app_id`` for the runner task-def
 # environment; the SSM Active-Revision parameter is orthogonal to it,
 # so a fixed placeholder is sufficient.
 _UNUSED_APP_ID: int = 999999
+# The runner image is orthogonal to the SSM Active-Revision parameter too.
+_RUNNER_IMAGE_URI: str = (
+    "000000000000.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-test"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +74,9 @@ def template() -> Template:
     stack = FargateRunnerStack(
         app,
         "TestFargateRunnerStack",
-        app_private_key_secret_arn=_MOCK_APP_KEY_ARN,
+        app_private_key_parameter_name=_APP_KEY_PARAMETER_NAME,
         app_id=_UNUSED_APP_ID,
+        runner_image_uri=_RUNNER_IMAGE_URI,
         env=Environment(account=_TEST_ACCOUNT, region=_TEST_REGION),
     )
     return Template.from_stack(stack)

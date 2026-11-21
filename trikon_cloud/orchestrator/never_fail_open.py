@@ -26,8 +26,8 @@ Implements the four public symbols required by design.md §7:
   ERROR without re-raising — the DynamoDB write already satisfies
   Invariant 2 (design.md §4.5 partial-success semantics).
 * :class:`OrchestratorGithubClient` — thin :class:`httpx.Client`
-  wrapper (design.md §7.3). Mints an App JWT from the PEM held in
-  Secrets Manager, exchanges it for an installation-scoped access
+  wrapper (design.md §7.3). Mints an App JWT from the PEM held in an
+  SSM ``SecureString`` parameter, exchanges it for an installation-scoped access
   token, caches both, and POSTs
   ``/repos/{repo_full_name}/check-runs`` with ``name="Trikon"``,
   ``status="completed"``, ``conclusion="neutral"``. Retries 5xx / 429
@@ -36,11 +36,17 @@ Implements the four public symbols required by design.md §7:
   :class:`OrchestratorGithubClientError`.
 * :class:`OrchestratorGithubClientError` — raised on retry-budget
   exhaustion or non-retryable 4xx.
+* :class:`FailClosedNotice` (sandbox-minute-plans) — optional copy and
+  evidence for a quota Fail_Closed_Result. Passed to
+  :func:`write_orchestrator_failure_verdict`, it overrides the row's
+  ``matched_rule`` and the Check Run's title, summary, conclusion, and
+  details URL via :meth:`OrchestratorGithubClient.create_check_run`.
+  ``notice=None`` keeps the terminal behaviour byte for byte.
 
 **Security invariants** (Invariant 6, Requirement 9.3):
 
 * The App private key PEM, the signed App JWT, the installation
-  access token, the raw Secrets Manager response body, and the raw
+  access token, the raw SSM ``GetParameter`` response body, and the raw
   ``ecs.RunTask`` response body are never logged at any level.
 * Failure-path exception messages carry status codes and error
   classes, never response bodies or credential bytes.
@@ -66,8 +72,10 @@ import json
 import random
 import threading
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 import boto3  # type: ignore[import-untyped]
 import httpx
@@ -83,6 +91,12 @@ from trikon_cloud.webhook_receiver.models import SqsJobMessage
 # HTTP client → error). Not isort alphabetical.
 __all__ = [  # noqa: RUF022
     "write_orchestrator_failure_verdict",
+    "publish_fail_closed_result",
+    "read_interim_check_run_id",
+    "FailClosedNotice",
+    "FailClosedTarget",
+    "FailClosedPublication",
+    "CheckRunConclusion",
     "build_synthetic_verdict_row",
     "OrchestratorGithubClient",
     "OrchestratorGithubClientError",
@@ -137,6 +151,82 @@ _CHECK_RUN_SUMMARY_TEMPLATE: str = (
     "pull request. A human reviewer will follow up. Delivery id: {delivery_id}."
 )
 
+# ``matched_rule`` of the existing RunTask terminal path (Requirement 7.1).
+_TERMINAL_MATCHED_RULE: str = "orchestrator terminal failure"
+
+#: The two Check Run conclusions a Fail_Closed_Result may carry
+#: (Requirement 11.10). Quota-related results use ``action_required``
+#: because GitHub treats ``neutral`` as passing for required checks.
+CheckRunConclusion = Literal["neutral", "action_required"]
+
+
+@dataclass(frozen=True)
+class FailClosedNotice:
+    """Customer-facing copy and evidence for one Fail_Closed_Result.
+
+    Passed to :func:`write_orchestrator_failure_verdict` to override
+    the default RunTask-terminal row and Check Run (Requirements 11.9,
+    11.10). Built by the pure ``quota_notices`` module.
+
+    Attributes
+    ----------
+    matched_rule:
+        The synthetic verdict row's ``matched_rule``; names the cause
+        (e.g. ``"sandbox minutes exhausted"``).
+    title:
+        Check Run ``output.title``.
+    summary:
+        Check Run ``output.summary``. There is no separate text field.
+    details_url:
+        Check Run ``details_url`` (Connect_URL, Upgrade_URL, or the
+        rendered details-URL template).
+    conclusion:
+        ``"neutral"`` or ``"action_required"``.
+    error_class:
+        ``error_class`` embedded in the row's ``evidence_blob``.
+    error_code:
+        ``error_code`` embedded in the row's ``evidence_blob``.
+    """
+
+    matched_rule: str
+    title: str
+    summary: str
+    details_url: str
+    conclusion: CheckRunConclusion
+    error_class: str
+    error_code: str
+
+
+@dataclass(frozen=True)
+class FailClosedTarget:
+    """The pull request head a Spot-related Fail_Closed_Result lands on.
+
+    Built by the Spot_Retry_Handler from the interrupted task's
+    Runner_Overrides (cost-cuts design, "Decision (pure)"). ``pr_number``
+    is ``None`` when the overrides do not carry it; then no
+    ``trikon_pr_state`` read happens and a new Check Run is created.
+    """
+
+    installation_id: int
+    repo_full_name: str
+    head_sha: str
+    pr_number: int | None
+
+
+@dataclass(frozen=True)
+class FailClosedPublication:
+    """Outcome of :func:`publish_fail_closed_result`.
+
+    ``row`` is ``"written"`` for a new synthetic verdict row,
+    ``"existed"`` when the natural-key condition failed (re-delivery),
+    and ``"skipped"`` when no row message was available. ``check_run``
+    is ``"completed"`` when an existing Check Run was PATCHed and
+    ``"created"`` when a new one was POSTed.
+    """
+
+    row: Literal["written", "existed", "skipped"]
+    check_run: Literal["created", "completed"]
+
 
 class OrchestratorGithubClientError(Exception):
     """Raised on Check Run retry-budget exhaustion or non-retryable 4xx.
@@ -155,26 +245,26 @@ class OrchestratorGithubClientError(Exception):
 # ---------------------------------------------------------------------------
 
 
-class _SecretsClientProtocol(Protocol):
-    """Structural type for the subset of the boto3 Secrets Manager client we call.
+class _SsmGetParameterProtocol(Protocol):
+    """Structural type for the one boto3 SSM call we make.
 
     ``boto3`` ships without type stubs; this :class:`typing.Protocol`
-    lets ``mypy --strict`` type-check the single ``get_secret_value``
-    call site in :meth:`OrchestratorGithubClient._get_app_private_key`
+    lets ``mypy --strict`` type-check the single ``get_parameter``
+    call site in :meth:`OrchestratorGithubClient._get_app_private_key_pem`
     without a runtime dependency on ``boto3-stubs``. The client is
-    expected to return a mapping whose ``SecretString`` field is the
-    PEM-encoded App private key.
+    expected to return a mapping whose ``Parameter.Value`` field is the
+    decrypted PEM-encoded App private key.
     """
 
-    def get_secret_value(
-        self, *, SecretId: str  # noqa: N803 -- AWS boto3 API contract
-    ) -> dict[str, str]: ...
+    def get_parameter(
+        self, *, Name: str, WithDecryption: bool  # noqa: N803 -- AWS boto3 API contract
+    ) -> Mapping[str, object]: ...
 
 
 class _DynamoDbClientProtocol(Protocol):
     """Structural type for the ``dynamodb:PutItem`` boto3 call we make.
 
-    Same rationale as :class:`_SecretsClientProtocol`: keeps
+    Same rationale as :class:`_SsmGetParameterProtocol`: keeps
     ``mypy --strict`` clean without ``boto3-stubs``. Item shape is
     the ``{"S":…, "N":…, "B":…}`` attribute-value form built by
     :func:`_to_dynamodb_item`.
@@ -189,6 +279,22 @@ class _DynamoDbClientProtocol(Protocol):
     ) -> object: ...
 
 
+class _DynamoDbGetItemProtocol(Protocol):
+    """Structural type for the ``dynamodb:GetItem`` call on ``trikon_pr_state``.
+
+    Used by :func:`read_interim_check_run_id`. Same rationale as
+    :class:`_DynamoDbClientProtocol`.
+    """
+
+    def get_item(
+        self,
+        *,
+        TableName: str,  # noqa: N803 -- AWS boto3 API contract
+        Key: dict[str, dict[str, str]],  # noqa: N803
+        ConsistentRead: bool,  # noqa: N803
+    ) -> Mapping[str, object]: ...
+
+
 # ---------------------------------------------------------------------------
 # §3.5 — Pure synthetic-verdict builder.
 # ---------------------------------------------------------------------------
@@ -200,6 +306,7 @@ def build_synthetic_verdict_row(
     error_class: str,
     error_code: str,
     duration_ms: int = 0,
+    matched_rule: str = _TERMINAL_MATCHED_RULE,
 ) -> VerdictRow:
     """Build the synthetic ``require_human`` verdict row (design.md §3.5).
 
@@ -209,8 +316,9 @@ def build_synthetic_verdict_row(
 
     * ``sk`` is ``f"{sqs_message.sent_at}#{sqs_message.delivery_id}"``
       matching Spec 2's ``sk`` pattern.
-    * ``decision`` is ``"require_human"`` and ``matched_rule`` is
-      ``"orchestrator terminal failure"`` (Requirement 7.1).
+    * ``decision`` is ``"require_human"`` and ``matched_rule`` defaults
+      to ``"orchestrator terminal failure"`` (Requirement 7.1); a
+      Fail_Closed_Result passes the cause instead (Requirement 11.9).
     * The four score counters (``blast_radius_score``, ``new_errors``,
       ``new_warnings``, ``preexisting_errors``) are all ``0`` — the
       runner never observed the diff.
@@ -245,6 +353,10 @@ def build_synthetic_verdict_row(
         (e.g. ``"AccessDeniedException"``).
     duration_ms:
         Wall-clock milliseconds from handler entry.
+    matched_rule:
+        The row's ``matched_rule``. Defaults to the RunTask-terminal
+        rule; quota Fail_Closed_Results pass the cause
+        (``FailClosedNotice.matched_rule``).
     """
     evidence_payload = json.dumps(
         {
@@ -264,7 +376,7 @@ def build_synthetic_verdict_row(
         head_sha=sqs_message.head_sha,
         base_sha=sqs_message.base_sha,
         decision="require_human",
-        matched_rule="orchestrator terminal failure",
+        matched_rule=matched_rule,
         blast_radius_score=0,
         new_errors=0,
         new_warnings=0,
@@ -330,8 +442,8 @@ class OrchestratorGithubClient:
 
     Two responsibilities:
 
-    1. **Token minting** — sign an App JWT from the PEM held in Secrets
-       Manager, exchange it for an installation-scoped access token,
+    1. **Token minting** — sign an App JWT from the PEM held in an SSM
+       ``SecureString`` parameter, exchange it for an installation-scoped access token,
        and cache both. Multi-tenant per Lambda container: one entry
        in :data:`_TOKEN_CACHE` per ``installation_id`` seen so far.
     2. **Neutral Check Run POST** — ``POST /repos/{repo_full_name}/check-runs``
@@ -342,15 +454,15 @@ class OrchestratorGithubClient:
 
     ``http_client`` is a dependency-injection seam for tests
     (typically a :mod:`respx`-backed :class:`httpx.Client`).
-    ``secrets_client`` is likewise injectable for tests
+    ``ssm_client`` is likewise injectable for tests
     (typically a :mod:`moto`-backed boto3 client). Both are required
     parameters; the caller (the Lambda cold-start bootstrap) owns
     their construction and lifecycle.
 
     **Security invariants** (Invariant 6, Requirement 9.3):
 
-    * The App private key PEM stays on the stack — read from Secrets
-      Manager, passed directly to :func:`jwt.encode`, never assigned
+    * The App private key PEM stays on the stack — read from SSM
+      Parameter Store, passed directly to :func:`jwt.encode`, never assigned
       to a module- or instance-level attribute.
     * The signed JWT is cached only inside :data:`_APP_JWT_CACHE`
       and never appears in a log record.
@@ -364,13 +476,13 @@ class OrchestratorGithubClient:
         self,
         *,
         app_id: int,
-        app_private_key_secret_arn: str,
-        secrets_client: _SecretsClientProtocol,
+        app_private_key_parameter_name: str,
+        ssm_client: _SsmGetParameterProtocol,
         http_client: httpx.Client,
     ) -> None:
         self._app_id: int = app_id
-        self._app_private_key_secret_arn: str = app_private_key_secret_arn
-        self._secrets_client: _SecretsClientProtocol = secrets_client
+        self._app_private_key_parameter_name: str = app_private_key_parameter_name
+        self._ssm_client: _SsmGetParameterProtocol = ssm_client
         self._http_client: httpx.Client = http_client
 
     def create_neutral_check_run(
@@ -412,7 +524,6 @@ class OrchestratorGithubClient:
                 :func:`write_orchestrator_failure_verdict` and logged
                 at ERROR without re-raising.
         """
-        token = self._get_installation_token(installation_id)
         # Extract delivery_id from the rendered details_url so the
         # summary carries it — the caller renders details_url from
         # the URL template, which contains ``{delivery_id}`` verbatim.
@@ -421,13 +532,49 @@ class OrchestratorGithubClient:
         summary = _CHECK_RUN_SUMMARY_TEMPLATE.format(
             delivery_id=_extract_delivery_id_hint(details_url)
         )
+        self.create_check_run(
+            installation_id=installation_id,
+            repo_full_name=repo_full_name,
+            head_sha=head_sha,
+            title=_CHECK_RUN_TITLE,
+            summary=summary,
+            conclusion="neutral",
+            details_url=details_url,
+        )
+
+    def create_check_run(
+        self,
+        *,
+        installation_id: int,
+        repo_full_name: str,
+        head_sha: str,
+        title: str,
+        summary: str,
+        conclusion: CheckRunConclusion,
+        details_url: str,
+    ) -> None:
+        """POST a ``completed`` Check Run named ``"Trikon"`` on ``head_sha``.
+
+        The general form behind :meth:`create_neutral_check_run`; the
+        caller supplies the copy, the conclusion (``"neutral"`` or
+        ``"action_required"``, Requirement 11.10), and the details URL.
+        ``name`` is always ``"Trikon"`` and ``status`` always
+        ``"completed"``; ``output.text`` is always ``null``. The body
+        key order matches the historical neutral POST so the wire
+        bytes are unchanged for the terminal path.
+
+        Raises:
+            OrchestratorGithubClientError: On retry-budget exhaustion
+                or non-retryable 4xx.
+        """
+        token = self._get_installation_token(installation_id)
         body: dict[str, object] = {
             "name": _CHECK_RUN_NAME,
             "head_sha": head_sha,
             "status": "completed",
-            "conclusion": "neutral",
+            "conclusion": conclusion,
             "output": {
-                "title": _CHECK_RUN_TITLE,
+                "title": title,
                 "summary": summary,
                 "text": None,
             },
@@ -436,6 +583,55 @@ class OrchestratorGithubClient:
         self._request_with_retry(
             method="POST",
             url=f"https://api.github.com/repos/{repo_full_name}/check-runs",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json_body=body,
+        )
+
+    def update_check_run(
+        self,
+        *,
+        installation_id: int,
+        repo_full_name: str,
+        check_run_id: int,
+        title: str,
+        summary: str,
+        conclusion: CheckRunConclusion,
+        details_url: str,
+    ) -> None:
+        """PATCH an existing Check Run to ``completed`` with ``conclusion``.
+
+        Completes the Interim_Check_Run (``in_progress``) the runner
+        posted before a Spot interruption (cost-cuts design D1). The
+        body omits ``name`` and ``head_sha``, which GitHub keys on the
+        Check Run id, and otherwise matches :meth:`create_check_run`:
+        ``status``, ``conclusion``, ``output`` (``text`` null) and
+        ``details_url``. Same token minting and retry policy.
+
+        Raises:
+            OrchestratorGithubClientError: On retry-budget exhaustion
+                or non-retryable 4xx (e.g. 404 for an unknown id).
+        """
+        token = self._get_installation_token(installation_id)
+        body: dict[str, object] = {
+            "status": "completed",
+            "conclusion": conclusion,
+            "output": {
+                "title": title,
+                "summary": summary,
+                "text": None,
+            },
+            "details_url": details_url,
+        }
+        self._request_with_retry(
+            method="PATCH",
+            url=(
+                f"https://api.github.com/repos/{repo_full_name}"
+                f"/check-runs/{check_run_id}"
+            ),
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
@@ -507,7 +703,7 @@ class OrchestratorGithubClient:
         :func:`jwt.encode` (established defect fix in Spec 2's
         ``github_client.py``).
 
-        The App private key PEM is read from Secrets Manager
+        The App private key PEM is read from SSM Parameter Store
         per-mint — the caching layer sits on the JWT, not on the PEM.
         """
         global _APP_JWT_CACHE
@@ -532,16 +728,20 @@ class OrchestratorGithubClient:
         return signed_jwt
 
     def _get_app_private_key_pem(self) -> bytes:
-        """Read the App private key PEM from Secrets Manager.
+        """Read the App private key PEM from its SSM ``SecureString`` parameter.
 
         The returned bytes are consumed immediately by
-        :func:`jwt.encode` and never held anywhere else. The Secrets
-        Manager response body is NOT logged (Invariant 6).
+        :func:`jwt.encode` and never held anywhere else. The SSM
+        response body is NOT logged (Invariant 6). A ``ClientError``
+        (e.g. ``ParameterNotFound``) or a ``KeyError`` on a response
+        without ``Parameter.Value`` propagates unchanged.
         """
-        response = self._secrets_client.get_secret_value(
-            SecretId=self._app_private_key_secret_arn,
+        response = self._ssm_client.get_parameter(
+            Name=self._app_private_key_parameter_name,
+            WithDecryption=True,
         )
-        return response["SecretString"].encode("utf-8")
+        parameter = cast(Mapping[str, object], response["Parameter"])
+        return cast(str, parameter["Value"]).encode("utf-8")
 
     def _request_with_retry(
         self,
@@ -658,8 +858,23 @@ def write_orchestrator_failure_verdict(
     github_client: OrchestratorGithubClient,
     env: OrchestratorEnvConfig,
     duration_ms: int = 0,
+    notice: FailClosedNotice | None = None,
+    complete_check_run_id: int | None = None,
 ) -> None:
     """Synthetic ``require_human`` verdict + neutral Check Run (design.md §7.2).
+
+    With ``notice=None`` this is the RunTask-terminal path, unchanged
+    byte for byte: ``matched_rule="orchestrator terminal failure"``,
+    the caller's ``error_class`` / ``error_code`` in ``evidence_blob``,
+    and a neutral Check Run via
+    :meth:`OrchestratorGithubClient.create_neutral_check_run`. With a
+    :class:`FailClosedNotice`, the row takes ``notice.matched_rule``
+    and the notice's ``error_class`` / ``error_code`` for its evidence,
+    and the Check Run posts the notice's title, summary, conclusion,
+    and details URL through
+    :meth:`OrchestratorGithubClient.create_check_run` (Requirements
+    11.9, 11.10). The DynamoDB condition and idempotency rule are the
+    same on both paths.
 
     Six-step body — the two halves (DynamoDB write, Check Run POST)
     are wrapped independently. If the DDB write succeeds and the
@@ -694,7 +909,7 @@ def write_orchestrator_failure_verdict(
         The cold-start-cached :class:`boto3.session.Session` from
         which this function derives the DynamoDB client. A session
         (rather than a pre-built client) is passed so the handler can
-        share credentials / region across the DDB + Secrets Manager
+        share credentials / region across the DDB + SSM
         touchpoints (design.md §4.1 module-scope caches).
     github_client:
         The cold-start-cached :class:`OrchestratorGithubClient`.
@@ -704,16 +919,35 @@ def write_orchestrator_failure_verdict(
         template.
     duration_ms:
         Wall-clock milliseconds from handler entry to this call.
+    notice:
+        Optional Fail_Closed_Result copy and evidence. ``None`` keeps
+        the RunTask-terminal behaviour.
+    complete_check_run_id:
+        Optional id of an existing Check Run (the Interim_Check_Run of
+        a Retry_Job) to PATCH to ``completed`` instead of POSTing a new
+        one, falling back to the POST when the PATCH fails
+        (:func:`_post_or_complete_check_run`; cost-cuts Req 11.5).
+        Partial-success semantics are unchanged. ``None`` (the default)
+        keeps the behaviour above byte for byte.
     """
     logger = get_logger()
 
     # Step 1 — Build the row (pure).
-    row = build_synthetic_verdict_row(
-        sqs_message=sqs_message,
-        error_class=error_class,
-        error_code=error_code,
-        duration_ms=duration_ms,
-    )
+    if notice is None:
+        row = build_synthetic_verdict_row(
+            sqs_message=sqs_message,
+            error_class=error_class,
+            error_code=error_code,
+            duration_ms=duration_ms,
+        )
+    else:
+        row = build_synthetic_verdict_row(
+            sqs_message=sqs_message,
+            error_class=notice.error_class,
+            error_code=notice.error_code,
+            duration_ms=duration_ms,
+            matched_rule=notice.matched_rule,
+        )
 
     # Step 2 — DynamoDB PutItem with natural-key idempotency guard.
     # ``boto3_session.client("dynamodb")`` returns ``Any`` (boto3 is
@@ -749,18 +983,49 @@ def write_orchestrator_failure_verdict(
     # Step 4 — Log the successful DynamoDB write.
     logger.info("orchestrator_verdict_written", sk=row.sk)
 
-    # Step 5 — POST the neutral Check Run. Failures are logged at
-    # ERROR without re-raising (partial-success semantics).
-    details_url = env.trikon_check_run_details_url_template.format(
-        delivery_id=sqs_message.delivery_id,
-    )
+    # Step 5 — POST the Check Run (neutral by default, or the
+    # notice's copy). Failures are logged at ERROR without
+    # re-raising (partial-success semantics).
     try:
-        github_client.create_neutral_check_run(
-            installation_id=sqs_message.installation_id,
-            repo_full_name=sqs_message.repo_full_name,
-            head_sha=sqs_message.head_sha,
-            details_url=details_url,
-        )
+        if complete_check_run_id is not None:
+            # Spot Retry_Job path (cost-cuts Req 11.5): complete the
+            # Interim_Check_Run, or create one when the PATCH fails.
+            effective_notice = (
+                notice
+                if notice is not None
+                else _terminal_notice(sqs_message=sqs_message, env=env)
+            )
+            _post_or_complete_check_run(
+                github_client,
+                FailClosedTarget(
+                    installation_id=sqs_message.installation_id,
+                    repo_full_name=sqs_message.repo_full_name,
+                    head_sha=sqs_message.head_sha,
+                    pr_number=sqs_message.pr_number,
+                ),
+                effective_notice,
+                complete_check_run_id,
+            )
+        elif notice is None:
+            details_url = env.trikon_check_run_details_url_template.format(
+                delivery_id=sqs_message.delivery_id,
+            )
+            github_client.create_neutral_check_run(
+                installation_id=sqs_message.installation_id,
+                repo_full_name=sqs_message.repo_full_name,
+                head_sha=sqs_message.head_sha,
+                details_url=details_url,
+            )
+        else:
+            github_client.create_check_run(
+                installation_id=sqs_message.installation_id,
+                repo_full_name=sqs_message.repo_full_name,
+                head_sha=sqs_message.head_sha,
+                title=notice.title,
+                summary=notice.summary,
+                conclusion=notice.conclusion,
+                details_url=notice.details_url,
+            )
     except OrchestratorGithubClientError as exc:
         # Body / credential bytes are NOT in ``exc``'s message by
         # construction (see :meth:`_request_with_retry`); logging
@@ -775,6 +1040,181 @@ def write_orchestrator_failure_verdict(
     # DDB row is the source of truth; this log record marks the
     # Never-Fail-Open path as complete for the audit trail.
     logger.info("orchestrator_failure_resolved")
+
+
+# ---------------------------------------------------------------------------
+# Spot-related Fail_Closed_Results (trikon-cloud-cost-cuts, Requirement 11).
+# ---------------------------------------------------------------------------
+
+# Same natural-key guard as Spec 2's writer and
+# :func:`write_orchestrator_failure_verdict` (Requirement 7.4).
+_VERDICT_CONDITION_EXPRESSION: str = (
+    "attribute_not_exists(installation_id) AND attribute_not_exists(sk)"
+)
+
+
+def _terminal_notice(
+    *, sqs_message: SqsJobMessage, env: OrchestratorEnvConfig
+) -> FailClosedNotice:
+    """The RunTask-terminal copy as a notice, for the PATCH path only.
+
+    Used when :func:`write_orchestrator_failure_verdict` gets a
+    ``complete_check_run_id`` but no notice. The copy, conclusion and
+    details URL equal :meth:`OrchestratorGithubClient.create_neutral_check_run`.
+    """
+    details_url = env.trikon_check_run_details_url_template.format(
+        delivery_id=sqs_message.delivery_id,
+    )
+    return FailClosedNotice(
+        matched_rule=_TERMINAL_MATCHED_RULE,
+        title=_CHECK_RUN_TITLE,
+        summary=_CHECK_RUN_SUMMARY_TEMPLATE.format(
+            delivery_id=_extract_delivery_id_hint(details_url)
+        ),
+        details_url=details_url,
+        conclusion="neutral",
+        error_class="terminal",
+        error_code="",
+    )
+
+
+def _post_or_complete_check_run(
+    github_client: OrchestratorGithubClient,
+    target: FailClosedTarget,
+    notice: FailClosedNotice,
+    complete_check_run_id: int | None,
+) -> Literal["created", "completed"]:
+    """Complete an existing Check Run, else create one.
+
+    With ``complete_check_run_id``, PATCH it to ``completed`` /
+    ``notice.conclusion`` and return ``"completed"``. When that PATCH
+    raises :class:`OrchestratorGithubClientError` (deleted run, 404,
+    retry budget), or when no id is given, POST a new Check Run on
+    ``target.head_sha`` and return ``"created"``. A POST failure
+    propagates. Does not log.
+    """
+    if complete_check_run_id is not None:
+        try:
+            github_client.update_check_run(
+                installation_id=target.installation_id,
+                repo_full_name=target.repo_full_name,
+                check_run_id=complete_check_run_id,
+                title=notice.title,
+                summary=notice.summary,
+                conclusion=notice.conclusion,
+                details_url=notice.details_url,
+            )
+        except OrchestratorGithubClientError:
+            pass
+        else:
+            return "completed"
+    github_client.create_check_run(
+        installation_id=target.installation_id,
+        repo_full_name=target.repo_full_name,
+        head_sha=target.head_sha,
+        title=notice.title,
+        summary=notice.summary,
+        conclusion=notice.conclusion,
+        details_url=notice.details_url,
+    )
+    return "created"
+
+
+def publish_fail_closed_result(
+    *,
+    target: FailClosedTarget,
+    row_message: SqsJobMessage | None,
+    notice: FailClosedNotice,
+    verdicts_table: str,
+    ddb_client: _DynamoDbClientProtocol,
+    github_client: OrchestratorGithubClient,
+    complete_check_run_id: int | None,
+) -> FailClosedPublication:
+    """Strict Fail_Closed_Result for the Spot_Retry_Handler (Req 11.1-11.4, 11.6).
+
+    1. If ``row_message`` is not ``None``, build the synthetic
+       ``require_human`` row with ``notice.matched_rule`` and the
+       notice's evidence, and PutItem it with the natural-key
+       condition. ``ConditionalCheckFailedException`` gives
+       ``row="existed"`` (idempotent re-delivery); any other
+       ``ClientError`` propagates. Without a row message, ``row`` is
+       ``"skipped"``.
+    2. Always post the Check Run, also after ``"existed"``, so a
+       retried event whose first Check Run POST failed still
+       publishes (:func:`_post_or_complete_check_run`). Unlike the
+       partial-success :func:`write_orchestrator_failure_verdict`, an
+       :class:`OrchestratorGithubClientError` propagates, so the
+       Lambda event is retried and finally dead-lettered (Req 11.6).
+
+    Does not log; the caller logs fixed event names.
+    """
+    row_outcome: Literal["written", "existed", "skipped"] = "skipped"
+    if row_message is not None:
+        row = build_synthetic_verdict_row(
+            sqs_message=row_message,
+            error_class=notice.error_class,
+            error_code=notice.error_code,
+            matched_rule=notice.matched_rule,
+        )
+        try:
+            ddb_client.put_item(
+                TableName=verdicts_table,
+                Item=_to_dynamodb_item(row),
+                ConditionExpression=_VERDICT_CONDITION_EXPRESSION,
+            )
+        except ClientError as exc:
+            if _extract_client_error_code(exc) != "ConditionalCheckFailedException":
+                raise
+            row_outcome = "existed"
+        else:
+            row_outcome = "written"
+    check_run = _post_or_complete_check_run(
+        github_client, target, notice, complete_check_run_id
+    )
+    return FailClosedPublication(row=row_outcome, check_run=check_run)
+
+
+def read_interim_check_run_id(
+    ddb_client: _DynamoDbGetItemProtocol,
+    *,
+    table: str,
+    pr_key: str,
+    head_sha: str,
+) -> int | None:
+    """Return the Interim_Check_Run id recorded on ``trikon_pr_state``.
+
+    ``GetItem(ConsistentRead=True)`` on ``pr_key``
+    (``"{installation_id}#{repo_full_name}#{pr_number}"``). Returns
+    ``last_check_run_id`` only when the row's ``last_head_sha`` equals
+    ``head_sha``. A missing row, a ``NULL`` or malformed id, a
+    different head, or any ``ClientError`` returns ``None``, and the
+    caller then creates a new Check Run.
+    """
+    try:
+        response = ddb_client.get_item(
+            TableName=table,
+            Key={"pr_key": {"S": pr_key}},
+            ConsistentRead=True,
+        )
+    except ClientError:
+        return None
+    item = response.get("Item")
+    if not isinstance(item, Mapping):
+        return None
+    head_attr = item.get("last_head_sha")
+    if not isinstance(head_attr, Mapping) or head_attr.get("S") != head_sha:
+        return None
+    id_attr = item.get("last_check_run_id")
+    if not isinstance(id_attr, Mapping):
+        return None
+    raw_id = id_attr.get("N")
+    if not isinstance(raw_id, str):
+        return None
+    try:
+        check_run_id = int(raw_id)
+    except ValueError:
+        return None
+    return check_run_id if check_run_id >= 1 else None
 
 
 def _extract_client_error_code(exc: ClientError) -> str:

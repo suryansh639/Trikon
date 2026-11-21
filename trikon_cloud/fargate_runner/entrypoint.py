@@ -1,5 +1,5 @@
 # The Fargate task-metadata endpoint (``ECS_CONTAINER_METADATA_URI_V4``) and
-# the Secrets Manager ``GetSecretValue`` shape are ``Any``-typed at the boto3
+# the SSM ``GetParameter`` shape are ``Any``-typed at the boto3
 # / httpx boundary. Under this repo's ``disallow_any_explicit = true`` mypy
 # config those annotations surface as ``explicit-any`` errors. The ``Any``
 # uses in this module are scoped to those two upstream JSON shapes and to
@@ -14,7 +14,7 @@ under :mod:`trikon_cloud.fargate_runner`. It orchestrates the 12-step
 flow from design.md §4 exactly once per Fargate task launch:
 
   1. Load env config (:class:`RunnerEnvConfig`).
-  2. Fetch App private key from Secrets Manager.
+  2. Fetch App private key from SSM Parameter Store.
   3. Mint JIT installation token (cached for the task lifetime).
   4. Shallow-fetch ``head_sha`` + ``base_sha`` into ``/tmp/repo``.
   5. Invoke :func:`trikon.sdk.verify` with ``no_sandbox=True``.
@@ -36,14 +36,22 @@ verdict, best-effort persists + posts, returns 1
 A :data:`signal.SIGALRM` handler installed at process start enforces
 the 10-minute wall-time cap from Invariant 5 (§12 path 13).
 
+A :data:`signal.SIGTERM` handler installed after the env load handles
+ECS stops and Fargate Spot reclaims (Requirement 10). Before the
+Final_Check_Run is posted, Attempt 1 on Spot capacity posts an
+in-progress Interim_Check_Run and exits 75; every other task fails
+closed with ``action_required`` and exits 1. A
+:class:`~trikon_cloud.fargate_runner.termination.PublishGuard` makes
+sure at most one interruption result is published.
+
 Public surface:
 
 * :func:`main` — the ``python -m trikon_cloud.fargate_runner.entrypoint``
   entry.
 
 **Security invariants** (Invariant 6): the App private key PEM, the
-signed JWT, the minted installation token, the Secrets Manager
-``GetSecretValue`` response body, and the gzipped evidence blob bytes
+signed JWT, the minted installation token, the SSM
+``GetParameter`` response body, and the gzipped evidence blob bytes
 are never logged at any level.
 
 **SDK boundary** (Invariant 4): the runner imports from
@@ -84,16 +92,25 @@ from trikon_cloud.fargate_runner import (
     git_ops,
     github_client,
     summary_builder,
+    termination,
     token_cache,
 )
 from trikon_cloud.fargate_runner import logger as runner_logger
 from trikon_cloud.fargate_runner.models import (
+    INTERIM_CHECK_RUN_SUMMARY,
+    INTERIM_CHECK_RUN_TITLE,
     CheckRunCreatePayload,
+    CheckRunInterimPayload,
     CheckRunOutput,
     CheckRunUpdatePayload,
     PrStateRow,
     RunnerEnvConfig,
     VerdictRow,
+)
+from trikon_cloud.fargate_runner.spot_contract import (
+    RUNNER_EXIT_FAIL_CLOSED,
+    RUNNER_EXIT_INTERIM,
+    RUNNER_EXIT_SUCCESS,
 )
 
 __all__ = ["main"]
@@ -123,6 +140,11 @@ _CONCLUSION_BY_DECISION: dict[str, str] = {
     "require_human": "neutral",
 }
 
+# Single-publication guard for the SIGTERM and fail-closed paths
+# (Requirement 10.5). :func:`main` replaces it with a fresh guard on
+# every run; :func:`_on_sigterm` and the publication helpers read it.
+_GUARD: termination.PublishGuard = termination.PublishGuard()
+
 
 # ---------------------------------------------------------------------------
 # Entrypoint.
@@ -140,8 +162,14 @@ def main() -> int:
     Returns:
         0 on success (including the ``ConditionalCheckFailedException``
         idempotency win from §12 path 7 and the two best-effort-degrade
-        paths §12 paths 11 and 12).
-        1 on any failure path (§12 paths 1-6, 8-10, 13, 14).
+        paths §12 paths 11 and 12), and after a SIGTERM once the
+        Final_Check_Run is posted, including one deferred during the
+        step 9b post and handled when a later step raises: the refused
+        interim or fail-closed claim publishes nothing (Requirement 10.4).
+        1 on any failure path (§12 paths 1-6, 8-10, 13, 14), including
+        a SIGTERM on Attempt 2 or on-demand capacity (Requirement 10.3).
+        75 after a SIGTERM on Attempt 1 on Spot capacity, which posts
+        the Interim_Check_Run (Requirement 10.1, 10.6).
     """
     # Step 0: install the wall-time cap alarm. ``SIGALRM`` fires after
     # 10 minutes; :func:`_on_alarm` raises ``TimeoutError`` which the
@@ -163,7 +191,7 @@ def main() -> int:
     pr_ts = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     # Step 1: env config. On failure we route to ``_fail_closed_no_env``
-    # (§12 path 1) — without the env we have no Secrets Manager ARN,
+    # (§12 path 1) — without the env we have no App-key parameter name,
     # no installation ID, and no way to write a DynamoDB row or post to
     # GitHub, so the best we can do is emit a stderr diagnostic and
     # exit 1.
@@ -185,13 +213,38 @@ def main() -> int:
     )
     log.info("entrypoint start", step=1)
 
-    # Top-level try / except wraps steps 2-11. Any exception routes
-    # through :func:`_fail_closed` (Property 2 / §12 paths 2-14).
+    # SIGTERM handling (Requirement 10). Installed after the env load:
+    # before it, the default SIGTERM action kills the process and the
+    # Spot_Retry_Handler still retries the task. The handler raises
+    # :class:`~termination.TerminationRequested` (a BaseException) out
+    # of whichever step is running; this outer ``except`` catches it,
+    # including a raise from inside :func:`_run_steps`'s own
+    # ``except Exception`` handler before :func:`_fail_closed` claims.
+    global _GUARD
+    _GUARD = termination.PublishGuard()
     try:
-        # Step 2: fetch the App private key from Secrets Manager. The
-        # PEM never enters any log record or exception message.
+        signal.signal(signal.SIGTERM, _on_sigterm)
+        return _run_steps(env, pr_ts, container_start_time, log)
+    except termination.TerminationRequested:
+        return _handle_termination(env, pr_ts, container_start_time, log)
+
+
+def _run_steps(
+    env: RunnerEnvConfig, pr_ts: str, container_start_time: float, log: Any
+) -> int:
+    """Steps 2-12 of the runner flow, under the Never_Fail_Open catchall.
+
+    A :class:`~termination.TerminationRequested` propagates to
+    :func:`main`. Any other exception routes through
+    :func:`_fail_closed` (Property 2 / §12 paths 2-14), or through
+    :func:`_handle_termination` when a SIGTERM deferred during the
+    step 9b post is pending (Requirement 10.4, 10.5).
+    """
+    try:
+        # Step 2: fetch the App private key from SSM Parameter Store.
+        # The PEM never enters any log record or exception message.
         log.info("fetching app private key", step=2)
-        private_key_pem = _fetch_app_private_key(env.app_private_key_secret_arn)
+        private_key_pem = _fetch_app_private_key(env.app_private_key_parameter_name)
 
         # Step 3: mint a JIT installation token, cached for the task
         # lifetime (design.md §3.9 clarify answer 3).
@@ -288,6 +341,11 @@ def main() -> int:
         conclusion = _CONCLUSION_BY_DECISION[verdict.decision]
         check_run_output = CheckRunOutput(title=check_run_title, summary=summary)
         check_run_id: int
+        # A SIGTERM from here until ``final_posted`` is deferred: the
+        # final post either lands (the signal is then ignored, Req 10.4)
+        # or raises, and the ``except`` below routes to the termination
+        # path because the request is pending.
+        _GUARD.begin_final_post()
         if (
             prior_pr_state is not None
             and prior_pr_state.last_check_run_id is not None
@@ -321,6 +379,7 @@ def main() -> int:
                 body=create_body,
             )
             check_run_id = created.id
+        _GUARD.final_posted()
 
         # Step 10: post or PATCH the PR comment. Best-effort per
         # Requirement 8.5 — a comment failure logs ERROR and continues
@@ -387,6 +446,10 @@ def main() -> int:
         return 0
 
     except Exception as exc:  # top-level Never_Fail_Open catchall (Property 2)
+        if _GUARD.termination_requested:
+            # A SIGTERM deferred during the step 9b post, or one that
+            # arrived after the final post (both claims are then refused).
+            return _handle_termination(env, pr_ts, container_start_time, log)
         return _fail_closed(exc, env, pr_ts, container_start_time, log)
 
 
@@ -407,18 +470,191 @@ def _on_alarm(signum: int, frame: FrameType | None) -> None:
     raise TimeoutError("exceeded 10-minute cap")
 
 
-def _fetch_app_private_key(secret_arn: str) -> bytes:
-    """Fetch the GitHub App private key PEM from Secrets Manager.
+def _on_sigterm(signum: int, frame: FrameType | None) -> None:
+    """SIGTERM handler (Requirement 10).
 
-    Returns the PEM as bytes. The returned value NEVER enters a log
-    record or an exception message — Invariant 6. A ``ClientError``
-    from ``GetSecretValue`` propagates to :func:`main`'s top-level
+    Records the request on :data:`_GUARD` and raises
+    :class:`~termination.TerminationRequested` only for the first
+    SIGTERM while the guard is RUNNING. A repeat SIGTERM never raises:
+    the first one is already being handled, and raising again from
+    inside :func:`_handle_termination` before it claims would escape
+    :func:`main` (Requirement 10.5).
+    """
+    del signum, frame
+    already_requested = _GUARD.termination_requested
+    if _GUARD.on_sigterm() and not already_requested:
+        raise termination.TerminationRequested()
+
+
+def _handle_termination(
+    env: RunnerEnvConfig, pr_ts: str, container_start_time: float, log: Any
+) -> int:
+    """Publish the one SIGTERM result for this task (Requirement 10.1, 10.3).
+
+    Attempt 1 on Spot capacity posts the Interim_Check_Run (a retry
+    follows); every other task fails closed with ``terminated=True``.
+    """
+    action = termination.termination_action(attempt=env.attempt, capacity=env.capacity)
+    log.warning(
+        "sigterm received",
+        attempt=env.attempt,
+        capacity=env.capacity,
+        action=action,
+        phase=_GUARD.phase.value,
+    )
+    if action == "interim":
+        return _post_interim(env, log)
+    return _fail_closed(
+        termination.TerminationRequested(),
+        env,
+        pr_ts,
+        container_start_time,
+        log,
+        terminated=True,
+    )
+
+
+def _post_interim(env: RunnerEnvConfig, log: Any) -> int:
+    """Post the in-progress Interim_Check_Run and return 75 (Requirement 10.1, 10.2, 10.6).
+
+    When the guard refuses the claim, nothing is posted: the exit code
+    is 0 after the Final_Check_Run is posted (Req 10.4) and 1 otherwise
+    (another publication already holds the claim, Req 10.5). Once
+    claimed, every path returns :data:`RUNNER_EXIT_INTERIM`; a failure
+    is logged by exception type only, and the Spot_Retry_Handler still
+    retries a Spot-interrupted task.
+    """
+    if not _GUARD.claim_interim():
+        exit_code = (
+            RUNNER_EXIT_SUCCESS
+            if _GUARD.phase is termination.Phase.FINAL_POSTED
+            else RUNNER_EXIT_FAIL_CLOSED
+        )
+        log.info("interim_suppressed", phase=_GUARD.phase.value, exit_code=exit_code)
+        return exit_code
+
+    try:
+        # The wall-time alarm must not interrupt the interim post.
+        signal.alarm(0)  # type: ignore[attr-defined]
+        private_key_pem = _fetch_app_private_key(env.app_private_key_parameter_name)
+        gh_client = github_client.GithubClient()
+        cache = token_cache.get_cache()
+        installation_token = cache.get_or_mint(
+            minter=lambda: gh_client.mint_installation_token(
+                installation_id=env.installation_id,
+                app_id=env.app_id,
+                private_key_pem=private_key_pem,
+            )
+        )
+        created = gh_client.create_check_run(
+            installation_token=installation_token,
+            repo_full_name=env.repo_full_name,
+            body=CheckRunInterimPayload(
+                name="Trikon",
+                head_sha=env.head_sha,
+                status="in_progress",
+                output=CheckRunOutput(
+                    title=INTERIM_CHECK_RUN_TITLE,
+                    summary=INTERIM_CHECK_RUN_SUMMARY,
+                ),
+            ),
+        )
+    except Exception as exc:  # best-effort post; the exit code is invariant
+        log.error("interim Check Run post failed", error_type=type(exc).__name__)
+        return RUNNER_EXIT_INTERIM
+
+    log.info("interim Check Run posted", check_run_id=created.id)
+    _record_interim_check_run(env, created.id, log)
+    return RUNNER_EXIT_INTERIM
+
+
+def _record_interim_check_run(env: RunnerEnvConfig, check_run_id: int, log: Any) -> None:
+    """Point ``trikon_pr_state`` at the Interim_Check_Run, best-effort.
+
+    The retry Runner's step 9b then PATCHes this exact Check Run to its
+    Final_Check_Run. The prior row's ``last_comment_id`` is kept; a
+    failed read records ``None`` rather than skipping the upsert,
+    because a stale ``last_check_run_id`` would leave the interim
+    check pending.
+    """
+    try:
+        db = dynamodb_writer.DynamoDBWriter(
+            verdicts_table_name=env.verdicts_table_name,
+            pr_state_table_name=env.pr_state_table_name,
+            evidence_bucket_name=env.evidence_bucket_name,
+        )
+        last_comment_id: int | None = None
+        try:
+            prior = db.get_pr_state(
+                installation_id=env.installation_id,
+                repo_full_name=env.repo_full_name,
+                pr_number=env.pr_number,
+            )
+            if prior is not None:
+                last_comment_id = prior.last_comment_id
+        except Exception as read_exc:  # best-effort read
+            log.error("interim pr_state read failed", error_type=type(read_exc).__name__)
+        db.upsert_pr_state(
+            row=PrStateRow(
+                pr_key=env.pr_state_key,
+                last_comment_id=last_comment_id,
+                last_check_run_id=check_run_id,
+                last_head_sha=env.head_sha,
+                last_updated_at=_utc_now_iso(),
+            )
+        )
+    except Exception as exc:  # best-effort upsert
+        log.error("interim pr_state upsert failed", error_type=type(exc).__name__)
+
+
+def _find_interim_check_run_id(env: RunnerEnvConfig, log: Any) -> int | None:
+    """Return the ``trikon_pr_state`` Check Run ID on this head SHA, best-effort.
+
+    On Attempt 2 this is the Interim_Check_Run posted by Attempt 1.
+    Returns ``None`` when the row is missing, points at another head
+    SHA, or cannot be read.
+    """
+    try:
+        db = dynamodb_writer.DynamoDBWriter(
+            verdicts_table_name=env.verdicts_table_name,
+            pr_state_table_name=env.pr_state_table_name,
+            evidence_bucket_name=env.evidence_bucket_name,
+        )
+        prior = db.get_pr_state(
+            installation_id=env.installation_id,
+            repo_full_name=env.repo_full_name,
+            pr_number=env.pr_number,
+        )
+    except Exception as exc:  # best-effort read; fall back to create
+        log.error("fail-closed pr_state read failed", error_type=type(exc).__name__)
+        return None
+    if prior is None or prior.last_head_sha != env.head_sha:
+        return None
+    return prior.last_check_run_id
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time, ISO-8601 with millisecond precision and a ``Z`` suffix."""
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _fetch_app_private_key(parameter_name: str) -> bytes:
+    """Fetch the GitHub App private key PEM from SSM Parameter Store.
+
+    Reads the SecureString parameter ``parameter_name`` with
+    ``WithDecryption=True`` and returns ``Parameter.Value`` as UTF-8
+    bytes. Nothing is cached: every call issues one ``GetParameter``.
+
+    The returned value NEVER enters a log record or an exception
+    message — Invariant 6. A ``ClientError`` from ``GetParameter``
+    (e.g. ``ParameterNotFound``) or a ``KeyError`` on a response
+    without ``Parameter.Value`` propagates to :func:`main`'s top-level
     ``except`` (§12 path 2).
     """
-    client = boto3.client("secretsmanager")
-    response = client.get_secret_value(SecretId=secret_arn)
-    secret_str: str = cast(str, response["SecretString"])
-    return secret_str.encode("utf-8")
+    client = boto3.client("ssm")
+    response = client.get_parameter(Name=parameter_name, WithDecryption=True)
+    value: str = cast(str, response["Parameter"]["Value"])
+    return value.encode("utf-8")
 
 
 def _resolve_policy_path(working_dir: Path) -> Path:
@@ -573,6 +809,8 @@ def _fail_closed(
     pr_ts: str,
     container_start_time: float,
     log: Any,
+    *,
+    terminated: bool = False,
 ) -> int:
     """Never_Fail_Open handler (Property 2 / §12 paths 2-14).
 
@@ -584,10 +822,45 @@ def _fail_closed(
     itself so the runner always returns an int rather than crashing
     the container (which would leave ECS to synthesize a stopped
     reason with less context).
+
+    Spot changes (Requirement 10, 11.7):
+
+    * The publication is claimed on :data:`_GUARD` first. A refused
+      claim logs ``fail_closed_suppressed`` and publishes nothing. It
+      returns 0 when the Final_Check_Run is posted (a SIGTERM after
+      FINAL_POSTED, Req 10.4) and 1 otherwise (an interim or
+      fail-closed result already holds the claim, Req 10.5), the same
+      as :func:`_post_interim`.
+    * The conclusion is :func:`~termination.fail_closed_conclusion`:
+      ``neutral`` on the Attempt 1, non-SIGTERM path (unchanged),
+      ``action_required`` after a SIGTERM (``terminated``) or on
+      Attempt 2.
+    * On Attempt 2 the Interim_Check_Run that ``trikon_pr_state``
+      records on this head SHA is PATCHed to completed; the create is
+      the fallback.
     """
+    # A first SIGTERM landing before the claim transitions raises
+    # TerminationRequested out of here; :func:`main` then handles it.
+    if not _GUARD.claim_fail_closed():
+        exit_code = (
+            RUNNER_EXIT_SUCCESS
+            if _GUARD.phase is termination.Phase.FINAL_POSTED
+            else RUNNER_EXIT_FAIL_CLOSED
+        )
+        log.warning(
+            "fail_closed_suppressed",
+            error_type=type(exc).__name__,
+            phase=_GUARD.phase.value,
+            exit_code=exit_code,
+        )
+        return exit_code
     log.error(
         "entrypoint fail-closed",
         error_type=type(exc).__name__,
+        terminated=terminated,
+    )
+    conclusion = termination.fail_closed_conclusion(
+        attempt=env.attempt, terminated=terminated
     )
     try:
         synth = _synthesize_fail_closed_verdict(exc=exc, env=env)
@@ -624,7 +897,7 @@ def _fail_closed(
         # ``name="Trikon"`` is fixed by ``Literal["Trikon"]`` on
         # :class:`CheckRunCreatePayload` (Invariant 7).
         try:
-            private_key_pem = _fetch_app_private_key(env.app_private_key_secret_arn)
+            private_key_pem = _fetch_app_private_key(env.app_private_key_parameter_name)
             gh_client = github_client.GithubClient()
             cache = token_cache.get_cache()
             installation_token = cache.get_or_mint(
@@ -644,18 +917,43 @@ def _fail_closed(
                 duration_ms=duration_ms,
             )
             title = summary.split("\n", 1)[0]
-            gh_client.create_check_run(
-                installation_token=installation_token,
-                repo_full_name=env.repo_full_name,
-                body=CheckRunCreatePayload(
-                    name="Trikon",
-                    head_sha=env.head_sha,
-                    status="completed",
-                    conclusion="neutral",
-                    output=CheckRunOutput(title=title, summary=summary),
-                    details_url=audit_url,
-                ),
+            output = CheckRunOutput(title=title, summary=summary)
+            patched = False
+            interim_id = (
+                _find_interim_check_run_id(env, log) if env.attempt > 1 else None
             )
+            if interim_id is not None:
+                try:
+                    gh_client.patch_check_run(
+                        installation_token=installation_token,
+                        repo_full_name=env.repo_full_name,
+                        check_run_id=interim_id,
+                        body=CheckRunUpdatePayload(
+                            status="completed",
+                            conclusion=conclusion,
+                            output=output,
+                            details_url=audit_url,
+                        ),
+                    )
+                    patched = True
+                except Exception as patch_exc:  # fall back to create
+                    log.error(
+                        "fail-closed Check Run PATCH failed; creating instead",
+                        error_type=type(patch_exc).__name__,
+                    )
+            if not patched:
+                gh_client.create_check_run(
+                    installation_token=installation_token,
+                    repo_full_name=env.repo_full_name,
+                    body=CheckRunCreatePayload(
+                        name="Trikon",
+                        head_sha=env.head_sha,
+                        status="completed",
+                        conclusion=conclusion,
+                        output=output,
+                        details_url=audit_url,
+                    ),
+                )
         except Exception as post_exc:  # best-effort post (Property 2)
             log.error(
                 "fail-closed Check Run post failed",
@@ -670,7 +968,7 @@ def _fail_closed(
             "fail-closed handler raised",
             error_type=type(final_exc).__name__,
         )
-    return 1
+    return RUNNER_EXIT_FAIL_CLOSED
 
 
 def _fail_closed_no_env(
@@ -678,7 +976,7 @@ def _fail_closed_no_env(
 ) -> int:
     """Fail-closed when :class:`RunnerEnvConfig` itself failed to load.
 
-    §12 path 1: no env → no Secrets Manager ARN, no installation ID,
+    §12 path 1: no env → no App-key parameter name, no installation ID,
     no way to write a DynamoDB row or post to GitHub. Structlog is
     not configured yet (that happens after env loads), so we emit a
     single-line JSON diagnostic directly to stderr and exit 1.

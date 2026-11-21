@@ -44,17 +44,70 @@ Build the runner container image locally from the repo root:
 docker build -f trikon_cloud/fargate_runner/Dockerfile -t trikon-cloud-runner:local .
 ```
 
-Manual release-engineer gate. Publishing the image to ECR Public is out of
-scope for the implementation tasks in this spec.
+Manual release-engineer gate. Deployed images are pushed to the private
+ECR repository `trikon-cloud-runner` with an immutable `runner-<git-sha>`
+tag; see [`infra/README.md`](infra/README.md) §5.
 
 ## Deploy
 
-Deploy the CDK stack that provisions the ECS cluster, task definition,
-DynamoDB tables, S3 evidence bucket, and per-installation IAM template:
+### When to deploy
+
+Deploy Trikon Cloud only once hosted PR checks are wanted. Until then
+nothing is deployed and nothing is billed on AWS. The CDK app still
+synthesizes offline, so the stack stays ready to deploy.
+
+### Before the first deploy
+
+Create the three SSM Parameter Store `SecureString` parameters in us-east-1
+(standard tier, AWS-managed `aws/ssm` key, values up to 4 KB). The stacks
+reference them by name and never create them:
 
 ```bash
-cdk deploy FargateRunnerStack
+aws ssm put-parameter --region us-east-1 \
+  --name /trikon-cloud/github-app-private-key \
+  --type SecureString --tier Standard \
+  --value file://<path-to-app-private-key.pem>
+
+aws ssm put-parameter --region us-east-1 \
+  --name /trikon-cloud/github-webhook-secret \
+  --type SecureString --tier Standard \
+  --value '<webhook-secret>'
+
+aws ssm put-parameter --region us-east-1 \
+  --name /trikon-cloud/usage-secret \
+  --type SecureString --tier Standard \
+  --value '<same-value-as-TRIKON_CLOUD_USAGE_SECRET-in-trikon-web>'
 ```
 
+Leave out `--key-id` so SSM uses the `aws/ssm` key. The usage secret must
+equal `TRIKON_CLOUD_USAGE_SECRET` in Trikon Web. The runner reads only the
+App private key, through the parameter named in
+`TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME`. To use a different name, pass
+`-c app_private_key_parameter_name=/custom/name` to the runner and
+orchestrator deploys (`webhook_secret_parameter_name` and
+`usage_secret_parameter_name` work the same way for the other two).
+
+### Deploy order
+
+Deploy the three stacks in this order: `FargateRunnerStack`,
+`WebhookReceiverStack`, `TrikonCloudOrchestratorStack`. Register the GitHub
+App webhook URL after the orchestrator is up. Deploy the runner stack,
+which provisions the ECS cluster (`FARGATE` and `FARGATE_SPOT` capacity
+providers), task definition (120-second stop timeout), DynamoDB tables, S3
+evidence bucket, log group (7-day retention), VPC with no NAT gateway, and
+per-installation IAM template:
+
+```bash
+uv run cdk deploy FargateRunnerStack \
+  -c app_id=<github-app-numeric-id> \
+  -c runner_image_uri=<account-id>.dkr.ecr.us-east-1.amazonaws.com/trikon-cloud-runner:runner-<git-sha> \
+  --app "python -m trikon_cloud.fargate_runner.infra.app"
+```
+
+`runner_image_uri` is required and names the pushed runner image; the tag
+`latest` is rejected.
+
 Manual release-engineer gate. The CDK app requires AWS credentials with the
-appropriate permissions and is not invoked from CI.
+appropriate permissions and is not invoked from CI. See
+[`infra/README.md`](infra/README.md) for the full runbook: the other two
+deploy commands, name overrides, Spot capacity and rollback.

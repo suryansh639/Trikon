@@ -12,15 +12,18 @@ Provisions everything Spec 2 owns: the shared ECS cluster
 (``trikon_installations``, ``trikon_verdicts``, ``trikon_pr_state``)
 including the two GSIs on ``trikon_verdicts``, the S3 evidence bucket
 (``trikon-cloud-evidence``), the CloudWatch log group
-(``/aws/ecs/trikon-verify-runner``), and a per-installation IAM
+(``/aws/ecs/trikon-verify-runner``), the public-subnet-only
+``trikon-verify-vpc`` (zero NAT gateways) with the egress-only
+``trikon-verify-runner-sg`` security group, and a per-installation IAM
 task-role template exposed via
 :meth:`FargateRunnerStack.build_task_role_for_installation` for Spec 3
 to invoke at ``ecs.RunTask`` time.
 
-The Secrets Manager secret ``trikon-cloud/github-app-private-key`` is
-**referenced by ARN**, never created here (Requirement 19.5) — its
-material is populated out-of-band by the release engineer before the
-first deploy. ``cdk destroy`` is therefore non-destructive: the
+The SSM SecureString parameter holding the GitHub App private key
+(default ``/trikon-cloud/github-app-private-key``) is **referenced by
+name**, never created here (Requirement 19.5; cost-cuts Req 3.5) — its
+value is put out-of-band by the release engineer before the first
+deploy. ``cdk destroy`` is therefore non-destructive: the
 ``RemovalPolicy.RETAIN`` on the tables + bucket guarantees data
 survives a stack teardown; only the cluster, task definition, IAM
 roles, and log group vanish.
@@ -33,7 +36,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aws_cdk import Duration, Fn, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, Fn, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecs as ecs
@@ -42,6 +45,8 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
+
+from trikon_cloud.secure_params import APP_KEY_PARAMETER_ENV, parameter_arn
 
 __all__ = ["FargateRunnerStack"]
 
@@ -55,41 +60,57 @@ class FargateRunnerStack(Stack):
     ``trikon_pr_state``), the S3 evidence bucket, the CloudWatch log
     group, and a per-installation IAM task-role template.
 
-    Does NOT create the Secrets Manager secret
-    ``trikon-cloud/github-app-private-key`` (Requirement 19.5) — the
-    secret ARN is passed in as a constructor argument. The release
-    engineer populates the secret out-of-band before deploy.
+    Does NOT create the App_Key_Parameter (Requirement 19.5; cost-cuts
+    Req 3.5) — its name is passed in as a constructor argument. The
+    release engineer puts the SecureString value out-of-band before
+    deploy.
+
+    Does NOT create the runner image repository either (go-live design
+    D1). The operator creates the private ECR repository
+    ``trikon-cloud-runner`` and pushes an immutable tag before deploying;
+    the stack only names the image through ``runner_image_uri``.
 
     Args:
         scope: Parent construct (typically ``cdk.App``).
         id: Stack logical id (typically ``"FargateRunnerStack"``).
-        app_private_key_secret_arn: Complete ARN of the pre-existing
-            Secrets Manager secret holding the GitHub App private key.
+        app_private_key_parameter_name: "/"-rooted name of the
+            pre-existing SSM SecureString parameter holding the GitHub
+            App private key. Passed to the runner container as
+            ``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME``.
         app_id: GitHub App numeric ID (baked into the task-definition
             env as ``TRIKON_APP_ID``).
-        ecr_public_repo_name: ECR Public repository name for the
-            runner image. Defaults to ``"trikon-cloud-runner"``.
+        runner_image_uri: Runner container image reference, already
+            validated by
+            :func:`trikon_cloud.fargate_runner.infra.app.runner_image_uri_from_context`
+            when built through the CDK app. Used unchanged as the
+            container image (go-live Req 5.4).
         kwargs: Forwarded to :class:`aws_cdk.Stack`.
 
     Public attributes:
         cluster_arn: ARN of the ECS cluster.
         task_definition_arn: ARN of the runner task definition.
         verdicts_table_name: Name of the verdicts DynamoDB table.
+        runner_subnet_ids: Ids of the VPC's public subnets (one per AZ)
+            that runner tasks launch into with a public IP.
+        runner_security_group_id: Id of the egress-only
+            ``trikon-verify-runner-sg`` security group.
     """
 
     cluster_arn: str
     task_definition_arn: str
     verdicts_table_name: str
     active_revision_param_name: str
+    runner_subnet_ids: list[str]
+    runner_security_group_id: str
 
     def __init__(
         self,
         scope: Construct,
         id: str,
         *,
-        app_private_key_secret_arn: str,
+        app_private_key_parameter_name: str,
         app_id: int,
-        ecr_public_repo_name: str = "trikon-cloud-runner",
+        runner_image_uri: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -182,34 +203,89 @@ class FargateRunnerStack(Stack):
 
         # -------------------------------------------------------------
         # 3. CloudWatch log group — /aws/ecs/trikon-verify-runner,
-        # 30-day retention, RETAIN so logs survive stack teardown.
+        # 7-day retention (cost-cuts Req 2.1), RETAIN so logs survive
+        # stack teardown.
         # -------------------------------------------------------------
         log_group = logs.LogGroup(
             self,
             "TrikonVerifyRunnerLogs",
             log_group_name="/aws/ecs/trikon-verify-runner",
-            retention=logs.RetentionDays.ONE_MONTH,
+            retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.RETAIN,
         )
 
         # -------------------------------------------------------------
-        # 4. VPC + ECS cluster — Spec 3 references the cluster by name.
-        # Minimal 2-AZ VPC with public + private subnets; single NAT
-        # gateway for egress-only tasks (memo §3.9).
+        # 4. VPC + runner security group + ECS cluster — Spec 3
+        # references the cluster by name. 2-AZ VPC with public subnets
+        # only and zero NAT gateways (sandbox-minute-plans Req 14.1,
+        # 14.2): runner tasks get a public IP (``assignPublicIp=
+        # ENABLED``) and reach ECR / package indexes through the
+        # internet gateway, so no NAT hourly or per-GB charge accrues.
+        # Changing the subnet layout replaces the VPC's subnets on
+        # deploy; deploy when no runner task is running.
         # -------------------------------------------------------------
         vpc = ec2.Vpc(
             self,
             "TrikonVerifyVpc",
             vpc_name="trikon-verify-vpc",
             max_azs=2,
-            nat_gateways=1,
+            nat_gateways=0,
+            subnet_configuration=[
+                ec2.SubnetConfiguration(
+                    name="Public",
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                    cidr_mask=24,
+                ),
+            ],
         )
+
+        # Egress-only: ``allow_all_outbound=True`` and no ingress rule is
+        # ever added (Req 14.3). Security groups are stateful, so return
+        # traffic for outbound connections is still admitted.
+        runner_sg = ec2.SecurityGroup(
+            self,
+            "TrikonVerifyRunnerSecurityGroup",
+            vpc=vpc,
+            security_group_name="trikon-verify-runner-sg",
+            description="Egress-only security group for trikon-verify-runner tasks",
+            allow_all_outbound=True,
+        )
+
+        # Outputs the release engineer copies into the OrchestratorStack
+        # ``runner_subnet_ids`` / ``runner_security_group_ids`` CDK
+        # context (Req 14.4).
+        public_subnet_ids = vpc.select_subnets(
+            subnet_type=ec2.SubnetType.PUBLIC
+        ).subnet_ids
+        CfnOutput(
+            self,
+            "RunnerSubnetIds",
+            value=Fn.join(",", public_subnet_ids),
+            description=(
+                "Comma-separated public subnet ids for the orchestrator "
+                "runner_subnet_ids context"
+            ),
+        )
+        CfnOutput(
+            self,
+            "RunnerSecurityGroupId",
+            value=runner_sg.security_group_id,
+            description=(
+                "Runner security group id for the orchestrator "
+                "runner_security_group_ids context"
+            ),
+        )
+        self.runner_subnet_ids = public_subnet_ids
+        self.runner_security_group_id = runner_sg.security_group_id
 
         cluster = ecs.Cluster(
             self,
             "TrikonVerifyCluster",
             cluster_name="trikon-verify-cluster",
             vpc=vpc,
+            # Associates FARGATE and FARGATE_SPOT so RunTask can name either
+            # in its capacityProviderStrategy (cost-cuts Req 8.1). The
+            # default strategy stays free of FARGATE_SPOT.
             enable_fargate_capacity_providers=True,
         )
 
@@ -246,31 +322,36 @@ class FargateRunnerStack(Stack):
         )
 
         # -------------------------------------------------------------
-        # 7. Container in the task definition. Image path points at
-        # ECR Public; the release engineer publishes the image tag
-        # ``0.3.6-runner-mvp`` out-of-band before Spec 3 can run tasks.
-        # Environment values are the CDK-configurable half of the memo
-        # §5.4 env-var contract; Spec 3 supplies the RunTask-time half
-        # via the ``overrides.containerOverrides.environment`` list.
+        # 7. Container in the task definition. The image is
+        # ``runner_image_uri`` unchanged: normally an immutable
+        # ``runner-<git short sha>`` tag in the private ECR repository
+        # ``trikon-cloud-runner``, which the operator creates and pushes
+        # to before deploying (trikon_cloud/DEPLOY.md). The execution
+        # role's AmazonECSTaskExecutionRolePolicy (§5) already allows
+        # pulls from same-account private ECR, so no extra grant is
+        # added. Environment values are the CDK-configurable half of the
+        # memo §5.4 env-var contract; Spec 3 supplies the RunTask-time
+        # half via the ``overrides.containerOverrides.environment`` list.
         # -------------------------------------------------------------
         task_def.add_container(
             id="runner",
-            image=ecs.ContainerImage.from_registry(
-                f"public.ecr.aws/trikon/{ecr_public_repo_name}:0.3.6-runner-mvp"
-            ),
+            image=ecs.ContainerImage.from_registry(runner_image_uri),
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="runner",
                 log_group=log_group,
             ),
             environment={
-                "TRIKON_APP_PRIVATE_KEY_SECRET_ARN": app_private_key_secret_arn,
+                APP_KEY_PARAMETER_ENV: app_private_key_parameter_name,
                 "TRIKON_APP_ID": str(app_id),
                 "TRIKON_VERDICTS_TABLE": "trikon_verdicts",
                 "TRIKON_PR_STATE_TABLE": "trikon_pr_state",
                 "TRIKON_EVIDENCE_BUCKET": "trikon-cloud-evidence",
                 "TRIKON_LOG_LEVEL": "INFO",
             },
-            stop_timeout=Duration.seconds(30),
+            # 120 s is the Fargate maximum and matches the Spot two-minute
+            # warning, so a SIGTERM'd runner has time to post its
+            # Interim_Check_Run before SIGKILL (cost-cuts Req 10.1).
+            stop_timeout=Duration.seconds(120),
         )
 
         # -------------------------------------------------------------
@@ -312,7 +393,7 @@ class FargateRunnerStack(Stack):
         self,
         installation_id: int,
         *,
-        app_private_key_secret_arn: str,
+        app_private_key_parameter_name: str,
     ) -> iam.Role:
         """Build a per-installation task role scoped by ``LeadingKeys``.
 
@@ -333,8 +414,10 @@ class FargateRunnerStack(Stack):
         Args:
             installation_id: The GitHub App installation ID this role
                 will scope permissions to.
-            app_private_key_secret_arn: The App private key ARN the
-                runner reads via Secrets Manager.
+            app_private_key_parameter_name: The App_Key_Parameter name
+                the runner reads via ``ssm:GetParameter``. The statement
+                grants exactly that one action on exactly its
+                Parameter_ARN (cost-cuts Req 4.5).
 
         Returns:
             An :class:`aws_cdk.aws_iam.Role` with the per-installation
@@ -396,12 +479,22 @@ class FargateRunnerStack(Stack):
             )
         )
 
-        # secretsmanager:GetSecretValue on the App private key ARN.
+        # SsmAppPrivateKeyRead: ssm:GetParameter on exactly the
+        # App_Key_Parameter ARN. No ``sid=`` so the synthesized statement
+        # byte-matches the Runtime_IAM_Renderer (which drops Sid on the
+        # wire). Inline, never ``grant_read``, which would add
+        # ssm:DescribeParameters / GetParameters / GetParameterHistory.
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                actions=["secretsmanager:GetSecretValue"],
-                resources=[app_private_key_secret_arn],
+                actions=["ssm:GetParameter"],
+                resources=[
+                    parameter_arn(
+                        region=self.region,
+                        account=self.account,
+                        name=app_private_key_parameter_name,
+                    )
+                ],
             )
         )
 

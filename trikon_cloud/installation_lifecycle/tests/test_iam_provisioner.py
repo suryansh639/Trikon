@@ -68,7 +68,7 @@ from trikon_cloud.installation_lifecycle.iam_template import (
 
 from .conftest import (
     CANONICAL_ACCOUNT_ID,
-    CANONICAL_APP_PRIVATE_KEY_SECRET_ARN,
+    CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
     CANONICAL_INSTALLATION_ID,
 )
 
@@ -109,13 +109,13 @@ def _setup_moto_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 def _make_inputs() -> tuple[InstallationPolicyDocument, AssumeRolePolicyDocument]:
     """Return canonical ``(policy, assume_role_policy)`` inputs for provision.
 
-    Uses the same account id, app-key ARN, and region every test
+    Uses the same account id, App-key parameter name, and region every test
     reads from conftest, so the resulting canonical-JSON strings are
     stable and comparable across tests.
     """
     policy = render_installation_policy_document(
         installation_id=CANONICAL_INSTALLATION_ID,
-        app_private_key_secret_arn=CANONICAL_APP_PRIVATE_KEY_SECRET_ARN,
+        app_private_key_parameter_name=CANONICAL_APP_PRIVATE_KEY_PARAMETER_NAME,
         account_id=CANONICAL_ACCOUNT_ID,
         region=_REGION,
     )

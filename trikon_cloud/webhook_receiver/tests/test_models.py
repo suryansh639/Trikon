@@ -182,6 +182,21 @@ def test_sqs_job_message_ignores_extra_fields() -> None:
     assert list(msg.model_dump().keys()) == _EXPECTED_KEY_ORDER
 
 
+def test_sqs_job_message_wire_bytes_carry_no_attempt_or_reservation_id() -> None:
+    """Receiver Job_Message bytes have no ``attempt`` / ``reservation_id`` key.
+
+    trikon-cloud-cost-cuts D6, Req 8.8: only the Orchestrator's
+    ``VerifyJobMessage`` declares those fields, so the Webhook_Receiver's
+    wire bytes stay unchanged and parse there as Attempt 1. Pins that the
+    receiver never starts writing either key.
+    """
+    wire = SqsJobMessage(**_canonical_sqs_message_dict()).model_dump_json().encode("utf-8")
+
+    assert b'"attempt"' not in wire
+    assert b'"reservation_id"' not in wire
+    assert set(json.loads(wire)) == set(_EXPECTED_KEY_ORDER)
+
+
 # ---------------------------------------------------------------------------
 # ReceiverEnvConfig.
 # ---------------------------------------------------------------------------
@@ -191,7 +206,9 @@ def test_receiver_env_config_loads_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Setting the aliased env vars yields a fully populated config object."""
-    monkeypatch.setenv("TRIKON_WEBHOOK_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:123:secret:x")
+    monkeypatch.setenv(
+        "TRIKON_WEBHOOK_SECRET_PARAMETER_NAME", "/trikon-cloud/github-webhook-secret"
+    )
     monkeypatch.setenv(
         "TRIKON_VERIFY_JOBS_QUEUE_URL",
         "https://sqs.us-east-1.amazonaws.com/123/trikon-verify-jobs",
@@ -205,7 +222,7 @@ def test_receiver_env_config_loads_from_environment(
 
     config = ReceiverEnvConfig()
 
-    assert config.webhook_secret_arn == "arn:aws:secretsmanager:us-east-1:123:secret:x"
+    assert config.webhook_secret_parameter_name == "/trikon-cloud/github-webhook-secret"
     assert config.verify_jobs_queue_url == (
         "https://sqs.us-east-1.amazonaws.com/123/trikon-verify-jobs"
     )
@@ -216,11 +233,41 @@ def test_receiver_env_config_loads_from_environment(
 def test_receiver_env_config_raises_on_missing_required_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unsetting ``TRIKON_WEBHOOK_SECRET_ARN`` raises ``ValidationError`` at construction."""
-    monkeypatch.delenv("TRIKON_WEBHOOK_SECRET_ARN", raising=False)
+    """Unsetting ``TRIKON_WEBHOOK_SECRET_PARAMETER_NAME`` raises ``ValidationError``."""
+    monkeypatch.delenv("TRIKON_WEBHOOK_SECRET_PARAMETER_NAME", raising=False)
     monkeypatch.setenv(
         "TRIKON_VERIFY_JOBS_QUEUE_URL",
         "https://sqs.us-east-1.amazonaws.com/123/trikon-verify-jobs",
+    )
+    monkeypatch.setenv(
+        "TRIKON_INSTALLATION_EVENTS_QUEUE_URL",
+        "https://sqs.us-east-1.amazonaws.com/123/trikon-cloud-installation-events",
+    )
+
+    with pytest.raises(ValidationError) as excinfo:
+        ReceiverEnvConfig()
+    assert [e["loc"] for e in excinfo.value.errors()] == [
+        ("TRIKON_WEBHOOK_SECRET_PARAMETER_NAME",)
+    ]
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["", "/", "trikon-cloud/github-webhook-secret"],
+    ids=["empty", "root-only", "not-slash-rooted"],
+)
+def test_receiver_env_config_rejects_invalid_parameter_name(
+    monkeypatch: pytest.MonkeyPatch, bad_name: str
+) -> None:
+    """A parameter name shorter than 2 chars or not ``/``-rooted fails validation."""
+    monkeypatch.setenv("TRIKON_WEBHOOK_SECRET_PARAMETER_NAME", bad_name)
+    monkeypatch.setenv(
+        "TRIKON_VERIFY_JOBS_QUEUE_URL",
+        "https://sqs.us-east-1.amazonaws.com/123/trikon-verify-jobs",
+    )
+    monkeypatch.setenv(
+        "TRIKON_INSTALLATION_EVENTS_QUEUE_URL",
+        "https://sqs.us-east-1.amazonaws.com/123/trikon-cloud-installation-events",
     )
 
     with pytest.raises(ValidationError):

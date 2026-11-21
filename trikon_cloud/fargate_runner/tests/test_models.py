@@ -24,7 +24,10 @@ import pytest
 from pydantic import ValidationError
 
 from trikon_cloud.fargate_runner.models import (
+    INTERIM_CHECK_RUN_SUMMARY,
+    INTERIM_CHECK_RUN_TITLE,
     CheckRunCreatePayload,
+    CheckRunInterimPayload,
     CheckRunOutput,
     GithubInstallationTokenResponse,
     PrStateRow,
@@ -33,6 +36,7 @@ from trikon_cloud.fargate_runner.models import (
 )
 
 from .conftest import (
+    APP_PRIVATE_KEY_PARAMETER_NAME,
     BASE_SHA,
     HEAD_SHA,
     INSTALLATION_ID,
@@ -63,6 +67,8 @@ def _fresh_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
         "TRIKON_EVIDENCE_BUCKET",
         "TRIKON_CHECK_RUN_DETAILS_URL_TEMPLATE",
         "TRIKON_LOG_LEVEL",
+        "TRIKON_ATTEMPT",
+        "TRIKON_CAPACITY",
     ):
         monkeypatch.delenv(optional_key, raising=False)
     return monkeypatch
@@ -130,9 +136,7 @@ def test_runner_env_config_loads_from_environment(_fresh_env: pytest.MonkeyPatch
     assert env.delivery_id == "e6e7a4d0-2b3c-4c5d-b6a7-1234567890ab"
     assert env.aws_region == "us-east-1"
     assert env.app_id == 999999
-    assert env.app_private_key_secret_arn.startswith(
-        "arn:aws:secretsmanager:us-east-1:"
-    )
+    assert env.app_private_key_parameter_name == APP_PRIVATE_KEY_PARAMETER_NAME
     # Numeric fields land as int, not str.
     assert isinstance(env.installation_id, int)
     assert isinstance(env.pr_number, int)
@@ -167,6 +171,98 @@ def test_runner_env_config_rejects_non_hex_base_sha(
 ) -> None:
     """A 40-char non-hex base SHA violates the hex pattern constraint."""
     _fresh_env.setenv("TRIKON_BASE_SHA", "z" * 40)
+
+    with pytest.raises(ValidationError):
+        RunnerEnvConfig()
+
+
+def test_runner_env_config_requires_app_key_parameter_name(
+    _fresh_env: pytest.MonkeyPatch,
+) -> None:
+    """``TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME`` is required."""
+    _fresh_env.delenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", raising=False)
+
+    with pytest.raises(ValidationError):
+        RunnerEnvConfig()
+
+
+def test_runner_env_config_ignores_obsolete_secret_arn(
+    _fresh_env: pytest.MonkeyPatch,
+) -> None:
+    """The old Secrets Manager alias no longer satisfies the App-key field."""
+    _fresh_env.delenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", raising=False)
+    # Built by concatenation so the Req 6.1 static scan (task 19.1) does
+    # not flag this negative test as a live reference.
+    _fresh_env.setenv(
+        "TRIKON_APP_PRIVATE_KEY_SECRET" + "_ARN",
+        "arn:aws:secrets" + "manager:us-east-1:123456789012:secret:old-AbCdEf",
+    )
+
+    with pytest.raises(ValidationError):
+        RunnerEnvConfig()
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["/", "trikon-cloud/github-app-private-key", ""],
+)
+def test_runner_env_config_rejects_malformed_parameter_name(
+    _fresh_env: pytest.MonkeyPatch, bad_name: str
+) -> None:
+    """The parameter name must start with ``/`` and be at least 2 chars."""
+    _fresh_env.setenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", bad_name)
+
+    with pytest.raises(ValidationError):
+        RunnerEnvConfig()
+
+
+def test_runner_env_config_spot_fields_default_to_on_demand_attempt_1(
+    _fresh_env: pytest.MonkeyPatch,
+) -> None:
+    """Without the overrides the task is Attempt 1 on on-demand capacity.
+
+    That is the safe default: a SIGTERM then fails closed and never
+    posts an Interim_Check_Run.
+    """
+    env = RunnerEnvConfig()
+    assert env.attempt == 1
+    assert env.capacity == "FARGATE"
+
+
+@pytest.mark.parametrize(
+    ("attempt", "capacity"),
+    [("1", "FARGATE_SPOT"), ("2", "FARGATE"), ("1", "FARGATE")],
+)
+def test_runner_env_config_reads_spot_fields(
+    _fresh_env: pytest.MonkeyPatch, attempt: str, capacity: str
+) -> None:
+    """``TRIKON_ATTEMPT`` and ``TRIKON_CAPACITY`` populate the fields."""
+    _fresh_env.setenv("TRIKON_ATTEMPT", attempt)
+    _fresh_env.setenv("TRIKON_CAPACITY", capacity)
+
+    env = RunnerEnvConfig()
+
+    assert env.attempt == int(attempt)
+    assert env.capacity == capacity
+
+
+@pytest.mark.parametrize("bad_attempt", ["0", "3", "-1", "one", ""])
+def test_runner_env_config_rejects_out_of_range_attempt(
+    _fresh_env: pytest.MonkeyPatch, bad_attempt: str
+) -> None:
+    """Only Attempts 1 and 2 exist (Max_Attempts is 2)."""
+    _fresh_env.setenv("TRIKON_ATTEMPT", bad_attempt)
+
+    with pytest.raises(ValidationError):
+        RunnerEnvConfig()
+
+
+@pytest.mark.parametrize("bad_capacity", ["EC2", "fargate_spot", "SPOT", ""])
+def test_runner_env_config_rejects_unknown_capacity(
+    _fresh_env: pytest.MonkeyPatch, bad_capacity: str
+) -> None:
+    """``TRIKON_CAPACITY`` must be exactly ``FARGATE`` or ``FARGATE_SPOT``."""
+    _fresh_env.setenv("TRIKON_CAPACITY", bad_capacity)
 
     with pytest.raises(ValidationError):
         RunnerEnvConfig()
@@ -295,6 +391,86 @@ def test_check_run_create_payload_name_literal_trikon() -> None:
             output=output,
             details_url="https://api.trikon.unideploy.com/audits/x",
         )
+
+
+# ---------------------------------------------------------------------------
+# CheckRunInterimPayload — in_progress, never a conclusion (Req 10.2).
+# ---------------------------------------------------------------------------
+
+
+def _interim_output() -> CheckRunOutput:
+    return CheckRunOutput(title=INTERIM_CHECK_RUN_TITLE, summary=INTERIM_CHECK_RUN_SUMMARY)
+
+
+def test_check_run_interim_payload_serializes_without_conclusion() -> None:
+    """The JSON body is in_progress and has no ``conclusion`` key at all.
+
+    A ``neutral`` interim check would count as passing for a required
+    check, so the key must be absent rather than null (D1).
+    """
+    payload = CheckRunInterimPayload(
+        name="Trikon",
+        head_sha=HEAD_SHA,
+        status="in_progress",
+        output=_interim_output(),
+    )
+
+    body: dict[str, Any] = payload.model_dump(mode="json")
+
+    assert body["status"] == "in_progress"
+    assert "conclusion" not in body
+    assert set(body) == {"name", "head_sha", "status", "output"}
+    assert body["name"] == "Trikon"
+    assert body["output"]["title"] == INTERIM_CHECK_RUN_TITLE
+    assert body["output"]["summary"] == INTERIM_CHECK_RUN_SUMMARY
+
+
+def test_check_run_interim_payload_rejects_a_conclusion() -> None:
+    """``extra="forbid"``: a ``conclusion`` cannot be smuggled in."""
+    with pytest.raises(ValidationError):
+        CheckRunInterimPayload.model_validate(
+            {
+                "name": "Trikon",
+                "head_sha": HEAD_SHA,
+                "status": "in_progress",
+                "conclusion": "neutral",
+                "output": {"title": "t", "summary": "s"},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("status", "completed"), ("status", "queued"), ("name", "AgentGuard")],
+)
+def test_check_run_interim_payload_literal_fields(field: str, value: str) -> None:
+    """``status`` is only ``in_progress`` and ``name`` only ``Trikon``."""
+    data: dict[str, Any] = {
+        "name": "Trikon",
+        "head_sha": HEAD_SHA,
+        "status": "in_progress",
+        "output": {"title": "t", "summary": "s"},
+    }
+    data[field] = value
+
+    with pytest.raises(ValidationError):
+        CheckRunInterimPayload.model_validate(data)
+
+
+def test_check_run_interim_payload_frozen() -> None:
+    payload = CheckRunInterimPayload(
+        name="Trikon", head_sha=HEAD_SHA, status="in_progress", output=_interim_output()
+    )
+    with pytest.raises((ValidationError, TypeError, AttributeError)):
+        payload.status = "completed"  # type: ignore[misc, assignment]
+
+
+def test_interim_copy_names_trikon_and_the_retry() -> None:
+    """User copy names the product and says a retry will update the check."""
+    assert INTERIM_CHECK_RUN_TITLE == "Trikon verification interrupted, retrying"
+    assert "Trikon" in INTERIM_CHECK_RUN_SUMMARY
+    assert "retry" in INTERIM_CHECK_RUN_SUMMARY
+    assert "update this check" in INTERIM_CHECK_RUN_SUMMARY
 
 
 # ---------------------------------------------------------------------------

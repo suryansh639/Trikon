@@ -52,6 +52,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import urllib.parse
 from collections.abc import Iterator
 from typing import IO, Any, Literal
 from unittest.mock import MagicMock
@@ -71,6 +72,7 @@ from trikon_cloud.installation_lifecycle.models import (
     LifecycleEnvConfig,
 )
 from trikon_cloud.installation_lifecycle.tests.conftest import (
+    CANONICAL_APP_PRIVATE_KEY_PARAMETER_ARN,
     CANONICAL_DELIVERY_ID,
     CANONICAL_GITHUB_APP_ID,
     CANONICAL_INSTALLATION_ID,
@@ -328,6 +330,23 @@ def test_installation_created_happy_path_provisions_iam_and_ddb(
     assert tags.get("installation_id") == str(CANONICAL_INSTALLATION_ID)
     inline_policies = iam.list_role_policies(RoleName=_EXPECTED_ROLE_NAME)
     assert _EXPECTED_INLINE_POLICY_NAME in inline_policies["PolicyNames"]
+
+    # The App-key statement is built from TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME
+    # (cost-cuts Req 4.4, 6.2): ssm:GetParameter on exactly its Parameter_ARN.
+    # moto may hand the document back URL-encoded or already decoded.
+    raw_document = iam.get_role_policy(
+        RoleName=_EXPECTED_ROLE_NAME, PolicyName=_EXPECTED_INLINE_POLICY_NAME
+    )["PolicyDocument"]
+    document = (
+        json.loads(urllib.parse.unquote(raw_document))
+        if isinstance(raw_document, str)
+        else raw_document
+    )
+    assert document["Statement"][3] == {
+        "Action": "ssm:GetParameter",
+        "Effect": "Allow",
+        "Resource": CANONICAL_APP_PRIVATE_KEY_PARAMETER_ARN,
+    }
 
     # (b) DDB row upserted with status="active" and the full data set.
     item = _get_ddb_item(ddb, CANONICAL_INSTALLATION_ID)

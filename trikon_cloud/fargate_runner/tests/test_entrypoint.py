@@ -87,6 +87,7 @@ from trikon_cloud.fargate_runner.git_ops import GitOpsError
 from trikon_cloud.fargate_runner.github_client import GithubClientError
 
 from .conftest import (
+    APP_PRIVATE_KEY_PARAMETER_NAME,
     APP_PRIVATE_KEY_PEM,
     INSTALLATION_ID,
     PR_NUMBER,
@@ -233,11 +234,11 @@ def _setup_env(
 
 
 def _setup_aws_resources() -> tuple[str, str, str, str]:
-    """Provision moto-backed DynamoDB tables + S3 bucket + Secret.
+    """Provision moto-backed DynamoDB tables + S3 bucket + SSM parameter.
 
     MUST be called inside an active ``@mock_aws()`` decorator scope.
     Returns ``(verdicts_table, pr_state_table, evidence_bucket,
-    secret_arn)``. The Secrets Manager secret stores the fixture
+    parameter_name)``. The SSM SecureString stores the fixture
     RSA PEM so :func:`~entrypoint._fetch_app_private_key` retrieves
     a valid key for :func:`~github_client.GithubClient.mint_installation_token`.
     """
@@ -266,17 +267,17 @@ def _setup_aws_resources() -> tuple[str, str, str, str]:
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.create_bucket(Bucket="trikon-cloud-evidence")
 
-    sm = boto3.client("secretsmanager", region_name="us-east-1")
-    resp = sm.create_secret(
-        Name="trikon-cloud/github-app-private-key",
-        SecretString=APP_PRIVATE_KEY_PEM.decode("utf-8"),
+    ssm = boto3.client("ssm", region_name="us-east-1")
+    ssm.put_parameter(
+        Name=APP_PRIVATE_KEY_PARAMETER_NAME,
+        Value=APP_PRIVATE_KEY_PEM.decode("utf-8"),
+        Type="SecureString",
     )
-    secret_arn: str = resp["ARN"]
     return (
         "trikon_verdicts",
         "trikon_pr_state",
         "trikon-cloud-evidence",
-        secret_arn,
+        APP_PRIVATE_KEY_PARAMETER_NAME,
     )
 
 
@@ -426,9 +427,9 @@ def test_property_idempotency_on_natural_key(
     Check Run / PR comment posts.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -520,9 +521,9 @@ def test_property_never_fail_open_closure(
     _name, kind, exc = injection
 
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     # Defaults for the two non-injected surfaces.
@@ -593,30 +594,95 @@ def test_path_1_validation_error_on_missing_env(
     assert exit_code == 1
 
 
+class _CountingSsm:
+    """Wrap a moto-backed SSM client and record every ``get_parameter`` call.
+
+    The wrapped client is a real boto3 client running against moto, so
+    the response shapes and ``ClientError`` codes are moto's. Only the
+    call arguments are recorded; the returned values are never stored.
+    """
+
+    def __init__(self, inner: Any, *, drop_value: bool = False) -> None:
+        self._inner = inner
+        self._drop_value = drop_value
+        self.calls: list[dict[str, Any]] = []
+
+    def get_parameter(self, **kwargs: Any) -> Any:
+        self.calls.append(dict(kwargs))
+        response = self._inner.get_parameter(**kwargs)
+        if self._drop_value:
+            del response["Parameter"]["Value"]
+        return response
+
+
+def _install_counting_ssm(
+    monkeypatch: pytest.MonkeyPatch, *, drop_value: bool = False
+) -> _CountingSsm:
+    """Route ``entrypoint``'s ``boto3.client("ssm")`` through a counter.
+
+    Every other service name still gets a plain moto-backed client.
+    """
+    counting = _CountingSsm(
+        boto3.client("ssm", region_name="us-east-1"), drop_value=drop_value
+    )
+    real_client = boto3.client
+
+    def _client(service_name: str, *args: Any, **kwargs: Any) -> Any:
+        if service_name == "ssm":
+            return counting
+        return real_client(service_name, *args, **kwargs)
+
+    # ``entrypoint`` calls ``boto3.client(...)`` through the module
+    # attribute, so patching the shared ``boto3`` module covers it.
+    monkeypatch.setattr(boto3, "client", _client)
+    return counting
+
+
 @mock_aws
-def test_path_2_secrets_manager_failure_returns_1(
+def test_fetch_app_private_key_reads_secure_string_as_utf8_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§12 path 2: Secrets Manager :meth:`get_secret_value` fails → exit 1.
+    """``_fetch_app_private_key`` returns ``Parameter.Value`` as UTF-8 bytes.
 
-    We provision the DynamoDB tables + S3 bucket but deliberately do
-    NOT create the referenced secret. moto returns
-    ``ResourceNotFoundException`` on the :meth:`get_secret_value`
-    call. The exception propagates from
+    Every call issues exactly one decrypted ``GetParameter`` on the
+    configured name; nothing is cached between calls (Req 5.1, 5.2).
+    """
+    _setup_env(monkeypatch)
+    _, _, _, parameter_name = _setup_aws_resources()
+    counting = _install_counting_ssm(monkeypatch)
+
+    first = entrypoint._fetch_app_private_key(parameter_name)
+    second = entrypoint._fetch_app_private_key(parameter_name)
+
+    assert first == APP_PRIVATE_KEY_PEM
+    assert second == APP_PRIVATE_KEY_PEM
+    assert counting.calls == [
+        {"Name": parameter_name, "WithDecryption": True},
+        {"Name": parameter_name, "WithDecryption": True},
+    ]
+
+
+@mock_aws
+def test_path_2_parameter_not_found_returns_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§12 path 2: SSM ``GetParameter`` fails → exit 1.
+
+    We provision the DynamoDB tables + S3 bucket and the App-key
+    parameter, then point the env at a parameter name that does not
+    exist. moto raises ``ParameterNotFound`` on the
+    :meth:`get_parameter` call. The ``ClientError`` propagates from
     :func:`~entrypoint._fetch_app_private_key`, is caught by
     :func:`main`'s top-level handler, and :func:`_fail_closed`
-    returns 1. The fail-closed handler's own re-fetch attempt is
-    isolated in a nested try/except so a second Secrets Manager
-    failure does not crash the handler.
+    returns 1. The fail-closed handler re-reads the parameter (no
+    cache) inside its nested try/except, so the second failure does
+    not crash the handler and GitHub is never contacted.
     """
     _setup_env(monkeypatch)
     _setup_aws_resources()
-    # Override with a non-existent secret ARN so moto raises
-    # ``ResourceNotFoundException``.
-    monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN",
-        "arn:aws:secretsmanager:us-east-1:123:secret:does-not-exist",
-    )
+    missing_name = "/trikon-cloud/does-not-exist"
+    monkeypatch.setenv("TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", missing_name)
+    counting = _install_counting_ssm(monkeypatch)
 
     _patch_git_ops(monkeypatch)
     _patch_sdk_verify(monkeypatch, verdict=make_verdict())
@@ -624,10 +690,44 @@ def test_path_2_secrets_manager_failure_returns_1(
     with respx.mock(
         base_url="https://api.github.com", assert_all_called=False
     ) as respx_mock:
-        _mock_github_endpoints(respx_mock)
+        routes = _mock_github_endpoints(respx_mock)
         exit_code = entrypoint.main()
 
     assert exit_code == 1
+    # Step 2 and the fail-closed re-read, both uncached.
+    assert counting.calls == [
+        {"Name": missing_name, "WithDecryption": True},
+        {"Name": missing_name, "WithDecryption": True},
+    ]
+    assert not routes["mint"].called
+
+
+@mock_aws
+def test_path_2_parameter_without_value_returns_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§12 path 2: a response without ``Parameter.Value`` → exit 1.
+
+    The ``KeyError`` from :func:`~entrypoint._fetch_app_private_key`
+    reaches :func:`_fail_closed` exactly like a ``ClientError``
+    (Req 5.3), and no installation token is minted.
+    """
+    _setup_env(monkeypatch)
+    _setup_aws_resources()
+    counting = _install_counting_ssm(monkeypatch, drop_value=True)
+
+    _patch_git_ops(monkeypatch)
+    _patch_sdk_verify(monkeypatch, verdict=make_verdict())
+
+    with respx.mock(
+        base_url="https://api.github.com", assert_all_called=False
+    ) as respx_mock:
+        routes = _mock_github_endpoints(respx_mock)
+        exit_code = entrypoint.main()
+
+    assert exit_code == 1
+    assert len(counting.calls) == 2
+    assert not routes["mint"].called
 
 
 @mock_aws
@@ -643,9 +743,9 @@ def test_path_3_installation_token_mint_returns_401(
     into :func:`_fail_closed`, which returns 1.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -679,9 +779,9 @@ def test_path_4_git_fetch_fails_returns_1(
     ``neutral`` Check Run and returns 1.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch, fail=True)
@@ -690,10 +790,14 @@ def test_path_4_git_fetch_fails_returns_1(
     with respx.mock(
         base_url="https://api.github.com", assert_all_called=False
     ) as respx_mock:
-        _mock_github_endpoints(respx_mock)
+        routes = _mock_github_endpoints(respx_mock)
         exit_code = entrypoint.main()
 
     assert exit_code == 1
+    # The Attempt 1, non-SIGTERM fail-closed conclusion stays neutral.
+    assert routes["create_check_run"].call_count == 1
+    body = json.loads(routes["create_check_run"].calls[0].request.content)
+    assert body["conclusion"] == "neutral"
 
 
 @mock_aws
@@ -712,9 +816,9 @@ def test_path_11_pr_comment_fails_but_check_run_succeeds(
     the fresh POST path (``prior_pr_state.last_comment_id is None``).
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -764,9 +868,9 @@ def test_happy_path_writes_verdict_and_posts_both_artifacts(
     smoke test that the per-module tests cannot cover.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -803,9 +907,9 @@ def test_happy_path_check_run_name_is_trikon(
     respx and JSON-decoded.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -839,9 +943,9 @@ def test_no_sandbox_true_passed_to_sdk_verify(
     a Docker-daemon dependency the container image does not carry.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -884,9 +988,9 @@ def test_summary_content_parity_at_entrypoint_boundary(
     reformats one leg — is caught here.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -926,9 +1030,9 @@ def test_happy_path_conclusion_maps_from_decision(
     that would otherwise only surface in production.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -962,9 +1066,9 @@ def test_happy_path_pr_state_upsert_populates_ids(
     both artifacts.
     """
     _setup_env(monkeypatch)
-    _, _, _, secret_arn = _setup_aws_resources()
+    _, _, _, parameter_name = _setup_aws_resources()
     monkeypatch.setenv(
-        "TRIKON_APP_PRIVATE_KEY_SECRET_ARN", secret_arn
+        "TRIKON_APP_PRIVATE_KEY_PARAMETER_NAME", parameter_name
     )
 
     _patch_git_ops(monkeypatch)
@@ -992,3 +1096,137 @@ def test_happy_path_pr_state_upsert_populates_ids(
     assert (
         item["last_head_sha"]["S"] == make_env_vars()["TRIKON_HEAD_SHA"]
     )
+
+
+# ---------------------------------------------------------------------------
+# SIGTERM wiring spot checks (Requirement 10). The full step x attempt
+# matrix lives in ``test_termination.py``.
+# ---------------------------------------------------------------------------
+
+
+def _seed_pr_state(
+    *, check_run_id: int | None, comment_id: int | None, head_sha: str
+) -> None:
+    """Write a ``trikon_pr_state`` row for the canonical PR."""
+    item: dict[str, Any] = {
+        "pr_key": {"S": f"{INSTALLATION_ID}#{REPO_FULL_NAME}#{PR_NUMBER}"},
+        "last_head_sha": {"S": head_sha},
+        "last_updated_at": {"S": "2026-01-01T00:00:00.000Z"},
+        "last_check_run_id": (
+            {"N": str(check_run_id)} if check_run_id is not None else {"NULL": True}
+        ),
+        "last_comment_id": (
+            {"N": str(comment_id)} if comment_id is not None else {"NULL": True}
+        ),
+    }
+    boto3.client("dynamodb", region_name="us-east-1").put_item(
+        TableName="trikon_pr_state", Item=item
+    )
+
+
+def _get_pr_state_item() -> dict[str, Any]:
+    dynamodb = boto3.client("dynamodb", region_name="us-east-1")
+    pr_key = f"{INSTALLATION_ID}#{REPO_FULL_NAME}#{PR_NUMBER}"
+    item: dict[str, Any] = dynamodb.get_item(
+        TableName="trikon_pr_state", Key={"pr_key": {"S": pr_key}}
+    )["Item"]
+    return item
+
+
+def _patch_sdk_verify_sigterm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Step 5 receives a SIGTERM through the real handler."""
+
+    def _stub(**_kwargs: Any) -> Verdict:
+        entrypoint._on_sigterm(signal.SIGTERM, None)
+        return make_verdict()
+
+    monkeypatch.setattr("trikon.sdk.verify", _stub)
+
+
+@mock_aws
+def test_sigterm_attempt_1_spot_posts_interim_and_exits_75(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Req 10.1, 10.2, 10.6: an in-progress interim with no conclusion, exit 75.
+
+    ``trikon_pr_state`` then points at the interim on this head SHA and
+    keeps the prior ``last_comment_id``.
+    """
+    _setup_env(monkeypatch, TRIKON_ATTEMPT="1", TRIKON_CAPACITY="FARGATE_SPOT")
+    _setup_aws_resources()
+    head_sha = make_env_vars()["TRIKON_HEAD_SHA"]
+    _seed_pr_state(check_run_id=7, comment_id=222, head_sha="0" * 40)
+    _patch_git_ops(monkeypatch)
+    _patch_sdk_verify_sigterm(monkeypatch)
+
+    with respx.mock(
+        base_url="https://api.github.com", assert_all_called=False
+    ) as respx_mock:
+        routes = _mock_github_endpoints(respx_mock)
+        exit_code = entrypoint.main()
+
+    assert exit_code == 75
+    assert routes["create_check_run"].call_count == 1
+    assert routes["patch_check_run"].call_count == 0
+    assert routes["create_comment"].call_count == 0
+    body = json.loads(routes["create_check_run"].calls[0].request.content)
+    assert body["status"] == "in_progress"
+    assert "conclusion" not in body
+    assert body["head_sha"] == head_sha
+    assert _scan_verdicts_table() == []
+
+    item = _get_pr_state_item()
+    assert item["last_check_run_id"]["N"] == "111"
+    assert item["last_comment_id"]["N"] == "222"
+    assert item["last_head_sha"]["S"] == head_sha
+
+
+@mock_aws
+def test_sigterm_attempt_2_patches_interim_with_action_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Req 10.3, 11.7: Attempt 2 fails closed on the interim, exit 1."""
+    _setup_env(monkeypatch, TRIKON_ATTEMPT="2", TRIKON_CAPACITY="FARGATE")
+    _setup_aws_resources()
+    _seed_pr_state(
+        check_run_id=111, comment_id=None, head_sha=make_env_vars()["TRIKON_HEAD_SHA"]
+    )
+    _patch_git_ops(monkeypatch)
+    _patch_sdk_verify_sigterm(monkeypatch)
+
+    with respx.mock(
+        base_url="https://api.github.com", assert_all_called=False
+    ) as respx_mock:
+        routes = _mock_github_endpoints(respx_mock)
+        exit_code = entrypoint.main()
+
+    assert exit_code == 1
+    assert routes["create_check_run"].call_count == 0
+    assert routes["patch_check_run"].call_count == 1
+    body = json.loads(routes["patch_check_run"].calls[0].request.content)
+    assert body["status"] == "completed"
+    assert body["conclusion"] == "action_required"
+    rows = _scan_verdicts_table()
+    assert [row["decision"]["S"] for row in rows] == ["require_human"]
+
+
+@mock_aws
+def test_sigterm_on_demand_creates_action_required_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Req 10.3: Attempt 1 on on-demand capacity creates a fail-closed run."""
+    _setup_env(monkeypatch, TRIKON_ATTEMPT="1", TRIKON_CAPACITY="FARGATE")
+    _setup_aws_resources()
+    _patch_git_ops(monkeypatch)
+    _patch_sdk_verify_sigterm(monkeypatch)
+
+    with respx.mock(
+        base_url="https://api.github.com", assert_all_called=False
+    ) as respx_mock:
+        routes = _mock_github_endpoints(respx_mock)
+        exit_code = entrypoint.main()
+
+    assert exit_code == 1
+    assert routes["create_check_run"].call_count == 1
+    body = json.loads(routes["create_check_run"].calls[0].request.content)
+    assert body["conclusion"] == "action_required"

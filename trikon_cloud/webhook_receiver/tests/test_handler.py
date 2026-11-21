@@ -15,7 +15,7 @@ moto's ``@mock_aws`` decorator — no live AWS is contacted.
 
 The handler caches four pieces of state at the module level
 (``_env_config``, ``_webhook_secret``, ``_sqs_writer``,
-``_secrets_client``) to keep warm-invocation cost minimal. Between test
+``_ssm_client``) to keep warm-invocation cost minimal. Between test
 functions the ``_reset_handler_module_state`` autouse fixture zeroes
 these back to ``None``; between hypothesis examples inside a single
 test function, the property test resets them manually (see
@@ -24,8 +24,9 @@ test function, the property test resets them manually (see
 An additional monkeypatch replaces ``sqs_writer.boto3`` with a
 :class:`types.SimpleNamespace` whose ``client`` attribute returns the
 test's :class:`SpySqsClient`. This scopes the substitution to the SQS
-writer module alone — the handler's Secrets Manager client construction
-still hits real moto-backed ``boto3.client("secretsmanager")``.
+writer module alone — the handler's SSM client construction still hits
+real moto-backed ``boto3.client("ssm")``, which serves the webhook
+secret as a SecureString parameter.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from trikon_cloud.webhook_receiver.tests.conftest import (
     compute_signature,
     make_api_gateway_event,
     make_pull_request_payload,
+    put_webhook_secret_parameter,
 )
 
 # ---------------------------------------------------------------------------
@@ -122,7 +124,7 @@ def _reset_handler_state() -> None:
     handler._env_config = None
     handler._webhook_secret = None
     handler._sqs_writer = None
-    handler._secrets_client = None
+    handler._ssm_client = None
 
 
 @pytest.fixture(autouse=True)
@@ -130,7 +132,7 @@ def _reset_handler_module_state() -> None:
     """Reset handler module-level caches before each test function.
 
     The handler.py caches ``_env_config``, ``_webhook_secret``,
-    ``_sqs_writer``, and ``_secrets_client`` at the module level so warm
+    ``_sqs_writer``, and ``_ssm_client`` at the module level so warm
     Lambda invocations reuse them. Under pytest, one test's cache
     poisons the next test unless we zero these slots explicitly.
     """
@@ -140,9 +142,9 @@ def _reset_handler_module_state() -> None:
 def _install_moto_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[str, str, Any]:
-    """Create moto SQS queue + Secrets Manager secret + env vars.
+    """Create moto SQS queue + SSM SecureString webhook secret + env vars.
 
-    Returns ``(queue_url, secret_arn, real_sqs_client)``. Must be
+    Returns ``(queue_url, parameter_name, real_sqs_client)``. Must be
     called inside a ``@mock_aws`` context — the real boto3 clients this
     function constructs are moto-backed only while the decorator is
     active.
@@ -159,18 +161,15 @@ def _install_moto_env(
     installation_events_queue_url = real_sqs.create_queue(
         QueueName="trikon-cloud-installation-events-test"
     )["QueueUrl"]
-    real_secrets = boto3.client("secretsmanager", region_name="us-east-1")
-    secret_arn = real_secrets.create_secret(
-        Name="trikon-cloud/github-app-webhook-secret-test",
-        SecretString=WEBHOOK_SECRET_BYTES.decode("utf-8"),
-    )["ARN"]
+    real_ssm = boto3.client("ssm", region_name="us-east-1")
+    parameter_name = put_webhook_secret_parameter(real_ssm)
 
-    monkeypatch.setenv("TRIKON_WEBHOOK_SECRET_ARN", secret_arn)
+    monkeypatch.setenv("TRIKON_WEBHOOK_SECRET_PARAMETER_NAME", parameter_name)
     monkeypatch.setenv("TRIKON_VERIFY_JOBS_QUEUE_URL", queue_url)
     monkeypatch.setenv(
         "TRIKON_INSTALLATION_EVENTS_QUEUE_URL", installation_events_queue_url
     )
-    return queue_url, secret_arn, real_sqs
+    return queue_url, parameter_name, real_sqs
 
 
 def _swap_sqs_writer_boto3(
@@ -179,7 +178,7 @@ def _swap_sqs_writer_boto3(
     """Replace ``sqs_writer.boto3`` with a namespace whose ``client`` returns ``spy``.
 
     Scopes the replacement to the SQS writer module — the handler's
-    ``boto3.client("secretsmanager")`` construction is unaffected.
+    ``boto3.client("ssm")`` construction is unaffected.
     """
     mock_boto3 = types.SimpleNamespace(client=lambda *_a, **_kw: spy)
     monkeypatch.setattr(sqs_writer, "boto3", mock_boto3)
@@ -255,7 +254,7 @@ def test_property_every_202_has_preceding_successful_sqs_send(
 
     Sub-test A of Property 2. Validates: Requirements 1.1, 5.1, 5.5, 7.1.
     """
-    queue_url, _secret_arn, real_sqs = _install_moto_env(monkeypatch)
+    queue_url, _parameter_name, real_sqs = _install_moto_env(monkeypatch)
     spy = SpySqsClient(real_client=real_sqs)
     _swap_sqs_writer_boto3(monkeypatch, spy)
 
@@ -319,7 +318,7 @@ def test_property_5xx_iff_sqs_send_fails(monkeypatch: pytest.MonkeyPatch) -> Non
     raises, the response is 5xx (specifically 502 per Requirement 5.5)
     and no 202 is emitted. Validates: Requirement 5.5.
     """
-    _queue_url, _secret_arn, _real_sqs = _install_moto_env(monkeypatch)
+    _queue_url, _parameter_name, _real_sqs = _install_moto_env(monkeypatch)
     failure = ClientError(
         {"Error": {"Code": "ThrottlingException", "Message": "mocked"}},
         "SendMessage",
@@ -410,24 +409,34 @@ def test_ping_returns_200_pong(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @mock_aws
-def test_secrets_manager_read_failure_returns_500(
+def test_webhook_secret_parameter_read_failure_returns_500(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Path 5: Secrets Manager read failure → 500 {"error": "internal_error"}."""
+    """Path 5: SSM ``GetParameter`` failure → 500 {"error": "internal_error"}.
+
+    The env points at a parameter name that moto does not hold, so the
+    real reader raises ``ClientError`` (``ParameterNotFound``), the
+    handler maps it to 500 and SQS is never touched. The failure is not
+    cached.
+    """
     _install_moto_env(monkeypatch)
+    monkeypatch.setenv(
+        "TRIKON_WEBHOOK_SECRET_PARAMETER_NAME", "/trikon-cloud/does-not-exist"
+    )
+    spy = SpySqsClient()
+    _swap_sqs_writer_boto3(monkeypatch, spy)
 
-    def _raise_client_error() -> bytes:
-        raise ClientError(
-            {"Error": {"Code": "AccessDeniedException", "Message": "denied"}},
-            "GetSecretValue",
-        )
-
-    monkeypatch.setattr(handler, "_load_webhook_secret", _raise_client_error)
+    with pytest.raises(ClientError) as excinfo:
+        handler._get_webhook_secret()
+    assert excinfo.value.response["Error"]["Code"] == "ParameterNotFound"
+    assert handler._webhook_secret is None
+    _reset_handler_state()
 
     event, _body = _pull_request_event(action="opened", include_signature=True)
     response = handler.handler(event, _make_lambda_context())
     assert response["statusCode"] == 500
     assert json.loads(_response_body(response)) == {"error": "internal_error"}
+    assert spy.calls == []
 
 
 @mock_aws
@@ -623,7 +632,7 @@ def test_202_body_carries_delivery_id(
 @mock_aws
 def test_sqs_message_field_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     """After a successful enqueue, the queue receives a message matching design.md §5.2 shape."""
-    queue_url, _secret_arn, real_sqs = _install_moto_env(monkeypatch)
+    queue_url, _parameter_name, real_sqs = _install_moto_env(monkeypatch)
     spy = SpySqsClient(real_client=real_sqs)
     _swap_sqs_writer_boto3(monkeypatch, spy)
 
@@ -656,7 +665,7 @@ def test_event_type_is_dotted(
     monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
     """The enqueued message's event_type is exactly ``pull_request.<action>``."""
-    _queue_url, _secret_arn, real_sqs = _install_moto_env(monkeypatch)
+    _queue_url, _parameter_name, real_sqs = _install_moto_env(monkeypatch)
     spy = SpySqsClient(real_client=real_sqs)
     _swap_sqs_writer_boto3(monkeypatch, spy)
 
